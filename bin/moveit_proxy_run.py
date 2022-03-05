@@ -5,7 +5,7 @@
 
 from __future__ import print_function
 
-from applevision_kalman.srv import MoveitPose
+from applevision_rospkg.srv import MoveitPose
 import sys
 import rospy
 import moveit_commander
@@ -18,7 +18,7 @@ def main():
     move_group = moveit_commander.MoveGroupCommander(MOVE_GROUP)
 
     def get_pose(req):
-        return move_group.get_current_pose().pose
+        return move_group.get_current_pose()
 
     s = rospy.Service('MoveitPose', MoveitPose, get_pose)
 

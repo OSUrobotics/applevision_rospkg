@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   geometry_msgs
+  roslaunch
 )
 
 ## System dependencies are found with CMake's conventions
@@ -49,16 +50,17 @@ catkin_python_setup()
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  PointWithCovarianceStamped.msg
+  RegionOfInterestWithCovarianceStamped.msg
+)
 
 ## Generate services in the 'srv' folder
 add_service_files(
    FILES
    MoveitPose.srv
+   Tf2Transform.srv
 )
 
 ## Generate actions in the 'action' folder
@@ -162,8 +164,11 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-   bin/applevision_kalman_run.py
    bin/moveit_proxy_run.py
+   bin/applevision_fake_sensor_inputs.py
+   bin/applevision_main.py
+   bin/tf2_proxy_run.py
+   bin/applevision_publish_frames.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -207,3 +212,7 @@ catkin_install_python(PROGRAMS
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
+
+
+### roslaunch
+roslaunch_add_file_check(launch)
