@@ -5,7 +5,7 @@ import numpy as np
 from numpy.core.fromnumeric import clip
 
 # state variables: x, y, z
-# control input: robot x', x'', y', y'', z', z''
+# control input: robot x, y, z from starting estimate point
 # process noise: constant acceleration model
 # sensors: x, y, z
 # units are mm k s
@@ -36,7 +36,7 @@ def area_of_intersecting_circles(rad_1, rad_2, center_dist):
 class EnvProperties:
 
     def __init__(self, delta_t_ms: int, accel_std: float, starting_position: Vec3,
-                 starting_std: float, z_std: float, backdrop_dist_mm: float, apple_r_mm: float,
+                 starting_std: float, z_std: float, backdrop_dist: float, apple_r: float,
                  dist_fov_rad: float) -> None:
         self.delta_t_ms = delta_t_ms
         self.delta_t = delta_t_ms / 1000
@@ -44,8 +44,8 @@ class EnvProperties:
         self.starting_position = starting_position
         self.starting_std = starting_std
         self.z_std = z_std
-        self.backdrop_dist_mm = backdrop_dist_mm
-        self.apple_r_mm = apple_r_mm
+        self.backdrop_dist = backdrop_dist
+        self.apple_r = apple_r
         self.dist_fov_rad = dist_fov_rad
 
 
@@ -63,7 +63,7 @@ class KalmanMatricies:
     def make_for_robot_model(env: EnvProperties) -> 'KalmanMatricies':
         t = env.delta_t
         F = np.eye(3)
-        G = KalmanMatricies._upscale_dim(np.array([[t, 0.5 * t * t]]), 3)
+        G = np.eye(3)
         Q = env.accel_std**2 * G @ np.transpose(G)
         H = np.eye(3)
         I = np.eye(H.shape[1], H.shape[1])
@@ -110,7 +110,7 @@ class KalmanFilter():
         x, y, z = pos
         fov_at_apple_rad = z * np.tan(env.dist_fov_rad / 2)
         try:
-            area_apple_in_fov = area_of_intersecting_circles(env.apple_r_mm, fov_at_apple_rad,
+            area_apple_in_fov = area_of_intersecting_circles(env.apple_r, fov_at_apple_rad,
                                                              np.sqrt(x**2 + y**2))
         except ValueError:
             return 0
@@ -133,13 +133,13 @@ class KalmanFilter():
         # compute predicted varience
         if min(all_pos_per_apple_in_fov) < self.appl_low:
             # this measurement is unlikely to be accurate, therefore our variance is maximum
-            varz = self.env.backdrop_dist_mm**2
+            varz = self.env.backdrop_dist**2
             covzcx = 0
             covzcy = 0
         else:
             mes_per_apple_in_fov = KalmanFilter._calc_per_apple_in_fov(self.env, (mx, my, ez))
             if mes_per_apple_in_fov >= self.appl_high:
-                varz = self.env.z_std**2 + (self.env.apple_r_mm / 2)**2
+                varz = self.env.z_std**2 + (self.env.apple_r / 2)**2
                 covzcx = 0
                 covzcy = 0
             else:
@@ -147,17 +147,17 @@ class KalmanFilter():
                 expected_per_apple_in_fov = self._calc_per_apple_in_fov(self.env, (ex, ey, ez))
 
                 d_var_est = varx + vary
-                a_var_est = (1 / 4 + (1 / (2 * self.env.apple_r_mm))**2 +
+                a_var_est = (1 / 4 + (1 / (2 * self.env.apple_r))**2 +
                              (1 / (2 * expected_fov_at_apple_rad))**2) * d_var_est
-                varz = (self.env.backdrop_dist_mm * (1 - expected_per_apple_in_fov))**2 + max(
-                    self.env.backdrop_dist_mm**2 * a_var_est**2, 0)
+                varz = (self.env.backdrop_dist * (1 - expected_per_apple_in_fov))**2 + max(
+                    self.env.backdrop_dist**2 * a_var_est**2, 0)
 
-                eacx = np.pi * ex - (1 / 2 + 1 / (2 * self.env.apple_r_mm) + 1 /
+                eacx = np.pi * ex - (1 / 2 + 1 / (2 * self.env.apple_r) + 1 /
                                      (2 * expected_fov_at_apple_rad)) * (varx + ex**2 + ey)
-                covzcx = self.env.backdrop_dist_mm * eacx
-                eacy = np.pi * ey - (1 / 2 + 1 / (2 * self.env.apple_r_mm) + 1 /
+                covzcx = self.env.backdrop_dist * eacx
+                eacy = np.pi * ey - (1 / 2 + 1 / (2 * self.env.apple_r) + 1 /
                                      (2 * expected_fov_at_apple_rad)) * (vary + ex + ey**2)
-                covzcy = self.env.backdrop_dist_mm * eacy
+                covzcy = self.env.backdrop_dist * eacy
         # TODO: covarience is broken
         var = np.array([[varx, 0, 0], [0, vary, 0], [0, 0, varz]])
         return np.maximum(var, 0)

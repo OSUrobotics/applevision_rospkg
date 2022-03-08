@@ -1,6 +1,7 @@
 <launch>
     <include file="$(find applevision_rospkg)/launch/config.launch" />
     <include file="$(find ur5e_moveit_config)/launch/demo.launch" />
+    <node name="applevision_visualizer" pkg="applevision_rospkg" type="applevision_visualizer.py" respawn="true" />
     <node name="applevision_fake_sensor_data" pkg="applevision_rospkg" type="applevision_fake_sensor_inputs.py" respawn="true" />
     <node name="applevision_main" pkg="applevision_rospkg" type="applevision_main.py" respawn="true" />
 </launch>
