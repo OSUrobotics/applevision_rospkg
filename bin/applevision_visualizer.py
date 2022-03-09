@@ -39,9 +39,9 @@ class CamVizHandler:
     CAMERA_SENSOR = (5449*(640/672)*1e-6, 3072*(360/380)*1e-6)
     CAMERA_FOCAL = 11e-3
 
-    def __init__(self, tf_get: rospy.ServiceProxy, p_out: rospy.Publisher) -> None:
-        self.tf_get = tf_get
-        self.p_out = p_out
+    def __init__(self) -> None:
+        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.p_out = rospy.Publisher('visualization_marker', Marker, queue_size=10)
         self._header = HeaderCalc('fake_grabber')
         self._gen = np.random.default_rng()
 
@@ -114,12 +114,15 @@ class CamVizHandler:
 
 
 class KalmanVizHandler:
-    def __init__(self, tf_get: rospy.ServiceProxy, p_out: rospy.Publisher) -> None:
-        self.tf_get = tf_get
-        self.p_out = p_out
+    def __init__(self) -> None:
+        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.p_out = rospy.Publisher('visualization_marker', Marker, queue_size=10)
 
     def callback(self, res: PointWithCovarianceStamped):
-        dist_to_apple = self.tf_get('apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+        try:
+            dist_to_apple = self.tf_get('apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+        except Exception:
+            return
         trans: TransformStamped = dist_to_apple.transform
         mag = math.sqrt(trans.transform.translation.x**2 + trans.transform.translation.y**2 + trans.transform.translation.z**2)
 
@@ -144,9 +147,9 @@ def main():
     rospy.init_node('applevision_vizualizer')
     rospy.wait_for_service('Tf2Transform')
 
-    main_proc = CamVizHandler(rospy.ServiceProxy('Tf2Transform', Tf2Transform), rospy.Publisher('visualization_marker', Marker, queue_size=10))
+    main_proc = CamVizHandler()
     camera = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, main_proc.callback, queue_size=10)
-    kal_proc = KalmanVizHandler(rospy.ServiceProxy('Tf2Transform', Tf2Transform), rospy.Publisher('visualization_marker', Marker, queue_size=10))
+    kal_proc = KalmanVizHandler()
     kal = rospy.Subscriber('applevision/est_apple_pos', PointWithCovarianceStamped, kal_proc.callback, queue_size=10)
 
     rospy.spin()

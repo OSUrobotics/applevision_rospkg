@@ -5,7 +5,7 @@ import math
 import numpy as np
 from std_msgs.msg import Header
 from tf2_msgs.msg import TFMessage
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped
 from sensor_msgs.msg import Range
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
@@ -34,38 +34,59 @@ class MainHandler:
     CAMERA_SENSOR = (5449*(640/672)*1e-6, 3072*(360/380)*1e-6)
     CAMERA_FOCAL = 11e-3
 
-    def __init__(self, tf_get: rospy.ServiceProxy, p_out: rospy.Publisher, tf2_out: rospy.Publisher, kal: KalmanFilter) -> None:
-        self.tf_get = tf_get
-        self.p_out = p_out
-        self.tf2_out = tf2_out
+    def __init__(self, topic: str, kal: KalmanFilter) -> None:
+        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.p_out = rospy.Publisher(topic, PointWithCovarianceStamped, queue_size=10)
+        self.viz_out = rospy.Publisher('applevision/est_apple_viz', PoseWithCovarianceStamped, queue_size=10)
+        self.tf2_out = rospy.Publisher('tf', TFMessage, queue_size=10)
         self.kal = kal
         self._header = HeaderCalc('fake_grabber')
         self._gen = np.random.default_rng()
 
     def callback(self, dist: Range, cam: RegionOfInterestWithCovarianceStamped):
-        dist_to_apple = self.tf_get('fake_grabber', 'start_pos', rospy.Time(), rospy.Duration())
+        dist_to_apple = self.tf_get('start_pos', 'fake_grabber', rospy.Time(), rospy.Duration())
         trans: TransformStamped = dist_to_apple.transform
         control = np.transpose(np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z]))
 
-        # compute apple x, y based off of the bounding box width/height avg
-        # TODO: how to fix this? it's unreliable
-        # TODO: improve varience calculations
-        apple_avg_dim = (cam.w + cam.h)/2
-        est_frame_width_m = self.CAMERA_RES[0]/apple_avg_dim*self.kal.env.apple_r
-        est_frame_height_m = est_frame_width_m*(self.CAMERA_RES[1]/self.CAMERA_RES[0])
-        est_x = cam.x/self.CAMERA_RES[0]*est_frame_width_m
-        est_y = cam.y/self.CAMERA_RES[1]*est_frame_height_m
-
         # publish the kalman filters predicted apple distance
-        # TODO: fix zero bounding box error
-        x_est, p_est, var = self.kal.step_filter(
-            (est_x, est_y, dist.range),
-            cam.x_var*(est_frame_width_m/self.CAMERA_RES[0]),
-            cam.y_var*(est_frame_height_m/self.CAMERA_RES[1]),
-            control)
+        if cam.w == 0 or cam.h == 0:
+            x_est, p_est, var = self.kal.step_filter(
+                (0, 0, 0, dist.range),
+                np.inf,
+                np.inf,
+                np.inf,
+                control)
+        else:
+            # compute apple x, y based off of the bounding box width/height avg
+            # TODO: how to fix this? it's unreliable
+            # TODO: improve varience calculations
+            est_frame_width_m = self.CAMERA_RES[0]/cam.w*(2*self.kal.env.apple_r)
+            est_frame_height_m = est_frame_width_m*(self.CAMERA_RES[1]/self.CAMERA_RES[0])
+            center_x = cam.x + cam.w/2
+            center_y = cam.y + cam.h/2
+            est_x = -(center_x - self.CAMERA_RES[0]/2)/self.CAMERA_RES[0]*est_frame_width_m
+            est_y = -(center_y - self.CAMERA_RES[1]/2)/self.CAMERA_RES[1]*est_frame_height_m
+            est_z = (est_frame_width_m/2)*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0])
+
+            frame_width_var_est = (1/cam.w_var**2)*(self.CAMERA_RES[0]*(2*self.kal.env.apple_r))**2
+            x_var = (cam.x_var + cam.w_var*0.25 + frame_width_var_est)*(est_frame_width_m/self.CAMERA_RES[0])**2
+            y_var = (cam.y_var + cam.h_var*0.25 + frame_width_var_est)*(est_frame_height_m/self.CAMERA_RES[1])**2
+            if cam.w == self.CAMERA_RES[0]:
+                z_var = np.inf
+            else:
+                z_var = frame_width_var_est*(0.5*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0]))**2
+
+            # TODO: kalman filter will runaway sometimes?
+            x_est, p_est, var = self.kal.step_filter(
+                (est_x, est_y, est_z, dist.range),
+                x_var,
+                y_var,
+                z_var,
+                control)
 
         trans_out = TransformStamped()
         trans_out.header = self._header.get_header()
+        trans_out.header.frame_id = 'fake_apple'
         trans_out.child_frame_id = 'apple'
         trans_out.transform.rotation.w = 1
         trans_out.transform.translation.x = x_est[0]
@@ -81,6 +102,14 @@ class MainHandler:
         out.covariance = p_est.flatten().tolist()
         self.p_out.publish(out)
 
+        out_viz = PoseWithCovarianceStamped()
+        out_viz.header = self._header.get_header()
+        out_viz.pose.pose.position = trans_out.transform.translation
+        out_viz.pose.pose.orientation.w = 1
+        out_viz.pose.covariance = np.pad(p_est, ((0, 3), (0, 3))).flatten().tolist()
+        self.viz_out.publish(out_viz)
+
+
 
 def main():
     rospy.init_node('applevision_main')
@@ -88,27 +117,21 @@ def main():
 
     # TODO: Tune these
     env = EnvProperties(delta_t_ms=33,
-                        accel_std=1,
-                        starting_position=(0, 0, 1),
+                        accel_std=0.01,
+                        starting_position=(0, 0, 0),
                         starting_std=.4,
                         z_std=.005,
                         backdrop_dist=.5,
-                        apple_r=.080,
-                        dist_fov_rad=np.deg2rad(25))
+                        apple_r=.040,
+                        dist_fov_rad=np.deg2rad(20))
     kal_filter = KalmanFilter(env, 1.5, 0.75, 0.9)
     rospy.logdebug(f'Kalman filter using environment {env} and filter {kal_filter}.')
 
     # input('Press any key to start Applevision...')
     # TODO: service proxy is unreliable, needs a retry mechanism
-    get_pose = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+    main_proc = MainHandler('applevision/est_apple_pos', kal_filter)
     dist = Subscriber('applevision/apple_dist', Range)
     camera = Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped)
-    p = rospy.Publisher('applevision/est_apple_pos', PointWithCovarianceStamped, queue_size=10)
-    tf2_p = rospy.Publisher('tf', TFMessage, queue_size=10)
-
-    main_proc = MainHandler(get_pose, p, tf2_p, kal_filter)
-
-    # allow half a frame of distance between two stamped data points
     sync = ApproximateTimeSynchronizer([dist, camera], 10, 0.017)
     sync.registerCallback(main_proc.callback)
 

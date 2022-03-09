@@ -55,11 +55,11 @@ class HeaderCalc:
 
 
 class DistPub:
-    def __init__(self, frame_id: str, pub: rospy.Publisher, tf_get: rospy.ServiceProxy) -> None:
-        self.pub = pub
-        self.tf_get = tf_get
+    def __init__(self, frame_id: str, topic: str) -> None:
+        self.pub = rospy.Publisher(topic, Range, queue_size=10)
+        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
         self._header_calc = HeaderCalc(frame_id)
-        self._cone_sensor_model = ConeSensorModel(2, APPLE_R, 0.001, np.random.default_rng())
+        self._cone_sensor_model = ConeSensorModel(1.5, APPLE_R, 0.001, np.random.default_rng())
 
     def callback(self, *args):
         # compute a fake distance based off of the robots position
@@ -80,9 +80,9 @@ class CamPub:
     CAMERA_SENSOR = (5449*(640/672)*1e-6, 3072*(360/380)*1e-6)
     CAMERA_FOCAL = 11e-3
 
-    def __init__(self, frame_id: str, pub: rospy.Publisher, tf_get: rospy.ServiceProxy) -> None:
-        self.pub = pub
-        self.tf_get = tf_get
+    def __init__(self, frame_id: str, topic: str) -> None:
+        self.pub = rospy.Publisher(topic, RegionOfInterestWithCovarianceStamped, queue_size=10)
+        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
         self._header_calc = HeaderCalc(frame_id)
         self._rng = np.random.default_rng()
 
@@ -120,13 +120,15 @@ class CamPub:
             y = np.clip(y, 0, 360)
             x_hold = (max(x, x_hold[0]), min(x, x_hold[1]))
             y_hold = (max(y, y_hold[0]), min(y, y_hold[1]))
-        
+
         # compute bounding box and publish
+        x_var = 100 if x_hold[0] != x_hold[1] else np.inf
+        y_var = 100 if y_hold[0] != y_hold[1] else np.inf
         self.pub.publish(
             header=self._header_calc.get_header(),
             x=round(x_hold[1]), y=round(y_hold[1]),
             w=round(x_hold[0]-x_hold[1]), h=round(y_hold[0]-y_hold[1]),
-            x_var=100, y_var=100, w_var=100, h_var=100)
+            x_var=x_var, y_var=y_var, w_var=2*x_var, h_var=2*y_var)
 
 
 class FakeAppleFramePub:
@@ -168,12 +170,8 @@ def main():
 
     rospy.loginfo('Starting fake sensor data...')
     rospy.wait_for_service('Tf2Transform')
-
-    get_transform = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
-    dist = rospy.Publisher('applevision/apple_dist', Range, queue_size=10)
-    camera = rospy.Publisher('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, queue_size=10)
-    dist_pub = DistPub('fake_grabber_dist', dist, get_transform)
-    cam_pub = CamPub('fake_grabber_cam', camera, get_transform)
+    dist_pub = DistPub('fake_grabber_dist', 'applevision/apple_dist')
+    cam_pub = CamPub('fake_grabber_cam', 'applevision/apple_camera')
     dist_timer = rospy.Timer(DISTANCE_PERIOD, dist_pub.callback)
     cam_timer = rospy.Timer(CAMERA_PERIOD, cam_pub.callback)
 

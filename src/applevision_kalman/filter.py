@@ -7,8 +7,8 @@ from numpy.core.fromnumeric import clip
 # state variables: x, y, z
 # control input: robot x, y, z from starting estimate point
 # process noise: constant acceleration model
-# sensors: x, y, z
-# units are mm k s
+# sensors: x, y, z cam, z sensor
+# units are m k s
 # axis is right hand rule, positive y points towards apple, z=0 centered around apple
 
 Vec3 = Tuple[float, float, float]
@@ -65,7 +65,12 @@ class KalmanMatricies:
         F = np.eye(3)
         G = np.eye(3)
         Q = env.accel_std**2 * G @ np.transpose(G)
-        H = np.eye(3)
+        H = np.array([
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+            [0, 0, 1]
+        ])
         I = np.eye(H.shape[1], H.shape[1])
 
         return KalmanMatricies(F, G, Q, H, I)
@@ -116,30 +121,31 @@ class KalmanFilter():
             return 0
         return clip(area_apple_in_fov / (np.pi * fov_at_apple_rad**2), 0, 1)
 
-    def _compute_var(self, mes_pos: Vec3, varx: float, vary: float, est_pos: Vec3) -> float:
-        mx, my, mz = mes_pos
+    def _compute_var(self, mes_pos: Tuple, varx: float, vary: float, varz: float, est_pos: Vec3) -> float:
+        mx, my, mzc, mzd = mes_pos
         ex, ey, ez = est_pos
         # determine if the apple is likely to be >80% of the FOV (we'll use 1.5sigma)
         x_err = np.sqrt(varx) * self.std_range
-        minmax_x = (mx + x_err, mx - x_err, mx)
+        minmax_x = (ex + x_err, ex - x_err, mx)
         y_err = np.sqrt(vary) * self.std_range
-        minmax_y = (my + y_err, my - y_err, my)
+        minmax_y = (ey + y_err, ey - y_err, my)
         z_err = self.env.z_std * self.std_range
         all_pos_per_apple_in_fov = [
-            KalmanFilter._calc_per_apple_in_fov(self.env, (x, y, mz + z_err))
+            KalmanFilter._calc_per_apple_in_fov(self.env, (x, y, mzd + z_err))
             for x, y in itertools.product(minmax_x, minmax_y)
         ]
 
         # compute predicted varience
         if min(all_pos_per_apple_in_fov) < self.appl_low:
             # this measurement is unlikely to be accurate, therefore our variance is maximum
-            varz = self.env.backdrop_dist**2
+            # varz = self.env.backdrop_dist**2
+            varz_dist = np.inf
             covzcx = 0
             covzcy = 0
         else:
             mes_per_apple_in_fov = KalmanFilter._calc_per_apple_in_fov(self.env, (mx, my, ez))
             if mes_per_apple_in_fov >= self.appl_high:
-                varz = self.env.z_std**2 + (self.env.apple_r / 2)**2
+                varz_dist = self.env.z_std**2 + (self.env.apple_r / 2)**2
                 covzcx = 0
                 covzcy = 0
             else:
@@ -149,7 +155,7 @@ class KalmanFilter():
                 d_var_est = varx + vary
                 a_var_est = (1 / 4 + (1 / (2 * self.env.apple_r))**2 +
                              (1 / (2 * expected_fov_at_apple_rad))**2) * d_var_est
-                varz = (self.env.backdrop_dist * (1 - expected_per_apple_in_fov))**2 + max(
+                varz_dist = (self.env.backdrop_dist * (1 - expected_per_apple_in_fov))**2 + max(
                     self.env.backdrop_dist**2 * a_var_est**2, 0)
 
                 eacx = np.pi * ex - (1 / 2 + 1 / (2 * self.env.apple_r) + 1 /
@@ -159,20 +165,32 @@ class KalmanFilter():
                                      (2 * expected_fov_at_apple_rad)) * (vary + ex + ey**2)
                 covzcy = self.env.backdrop_dist * eacy
         # TODO: covarience is broken
-        var = np.array([[varx, 0, 0], [0, vary, 0], [0, 0, varz]])
+        var = np.array([
+            [varx, 0, 0, 0],
+            [0, vary, 0,  0],
+            [0, 0, varz, 0],
+            [0, 0, 0, varz_dist]])
         return np.maximum(var, 0)
 
-    def step_filter(self, meas_pos: Vec3, varx: float, vary: float,
+    def step_filter(self, meas_pos: Tuple, varx: float, vary: float, varz: float,
                     control: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         meas = np.transpose(meas_pos)
-        var = self._compute_var(meas_pos, varx, vary, np.transpose(self.x_est))
+        # this matrix may have infinity
+        var = self._compute_var(meas_pos, varx, vary, varz, np.transpose(self.x_est))
 
-        x_predict = self.mtx.F @ self.x_est + self.mtx.G @ control
+        # TODO: improve control matrix handling
+        if self.last_ctrl is None:
+            x_predict = self.mtx.F @ self.x_est
+        else:
+            x_predict = self.mtx.F @ self.x_est + self.mtx.G @ (control - self.last_ctrl)
+        self.last_ctrl = control
         p_predict = self.mtx.F @ self.p_est @ np.transpose(self.mtx.F) + self.mtx.Q
         K = p_predict @ np.transpose(
             self.mtx.H) @ np.linalg.inv(self.mtx.H @ p_predict @ np.transpose(self.mtx.H) + var)
         self.x_est = x_predict + K @ (meas - self.mtx.H @ x_predict)
         fact = (self.mtx.I - K @ self.mtx.H)
+        # replace inf with a very large number to prevent nans being generated when inf*0 occurs
+        var = np.nan_to_num(var, nan=0, posinf=1e9)
         self.p_est = fact @ p_predict @ np.transpose(fact) + K @ var @ np.transpose(K)
         self.p_est = np.maximum(self.p_est, 0)
 

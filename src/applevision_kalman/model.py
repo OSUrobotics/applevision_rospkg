@@ -27,7 +27,7 @@ def area_of_intersecting_circles(rad_1, rad_2, center_dist):
 
 
 class ConeSensorModel:
-    FOV_RAD = np.deg2rad(25)
+    FOV_RAD = np.deg2rad(20)
 
     def __init__(self, backdrop_dist: float, apple_rad: float, stddev: float,
                  rng: np.random.Generator):
