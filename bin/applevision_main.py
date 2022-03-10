@@ -60,6 +60,8 @@ class MainHandler:
             # compute apple x, y based off of the bounding box width/height avg
             # TODO: how to fix this? it's unreliable
             # TODO: improve varience calculations
+            # TODO: fix when apple flies off screen
+            # TODO: initialize robot in correct position
             est_frame_width_m = self.CAMERA_RES[0]/cam.w*(2*self.kal.env.apple_r)
             est_frame_height_m = est_frame_width_m*(self.CAMERA_RES[1]/self.CAMERA_RES[0])
             center_x = cam.x + cam.w/2

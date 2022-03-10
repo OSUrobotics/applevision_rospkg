@@ -62,7 +62,7 @@ class KalmanMatricies:
     @staticmethod
     def make_for_robot_model(env: EnvProperties) -> 'KalmanMatricies':
         t = env.delta_t
-        F = np.eye(3)
+        F = np.eye(3) # not used currently
         G = np.eye(3)
         Q = env.accel_std**2 * G @ np.transpose(G)
         H = np.array([
@@ -179,21 +179,20 @@ class KalmanFilter():
         var = self._compute_var(meas_pos, varx, vary, varz, np.transpose(self.x_est))
 
         # TODO: improve control matrix handling
-        if self.last_ctrl is None:
-            x_predict = self.mtx.F @ self.x_est
-        else:
-            x_predict = self.mtx.F @ self.x_est + self.mtx.G @ (control - self.last_ctrl)
+        ctrl_off = self.mtx.G @ control
+        x_predict_real = self.x_est + ctrl_off
         self.last_ctrl = control
         p_predict = self.mtx.F @ self.p_est @ np.transpose(self.mtx.F) + self.mtx.Q
         K = p_predict @ np.transpose(
             self.mtx.H) @ np.linalg.inv(self.mtx.H @ p_predict @ np.transpose(self.mtx.H) + var)
-        self.x_est = x_predict + K @ (meas - self.mtx.H @ x_predict)
-        fact = (self.mtx.I - K @ self.mtx.H)
+        self.x_est_real = x_predict_real + K @ (meas - self.mtx.H @ x_predict_real)
+        self.x_est = self.x_est_real - ctrl_off
         # replace inf with a very large number to prevent nans being generated when inf*0 occurs
         var = np.nan_to_num(var, nan=0, posinf=1e9)
+        fact = (self.mtx.I - K @ self.mtx.H)
         self.p_est = fact @ p_predict @ np.transpose(fact) + K @ var @ np.transpose(K)
         self.p_est = np.maximum(self.p_est, 0)
 
         assert np.all(var >= 0)
 
-        return self.x_est, self.p_est, var
+        return self.x_est_real, self.p_est, var
