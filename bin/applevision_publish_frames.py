@@ -31,7 +31,7 @@ def main():
     dist_tf = make_tf(now, 'fake_grabber', 'fake_grabber_dist', 0, 0, 0, ry=-0.7071, rw=0.7071)
     cam_tf = make_tf(now, 'fake_grabber', 'fake_grabber_cam', 0, 0, 0, rz=1, rw=0)
     apple_tf = make_tf(now, 'base_link', 'fake_apple', 0, 0.7, 0.5, ry=0.7071, rz=0.7071, rw=0)
-    start_tf = make_tf(now, 'fake_apple', 'start_pos', 0, -0.7, 0)
+    start_tf = make_tf(now, 'fake_apple', 'start_pos', 0, 0, -0.7)
 
 
     rospy.loginfo('Publishing frames at 10Hz...')

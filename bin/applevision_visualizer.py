@@ -124,8 +124,6 @@ class KalmanVizHandler:
         except Exception:
             return
         trans: TransformStamped = dist_to_apple.transform
-        mag = math.sqrt(trans.transform.translation.x**2 + trans.transform.translation.y**2 + trans.transform.translation.z**2)
-
         # draw an arrow from the grabber to where we think the apple is
         arrow_mark = Marker()
         arrow_mark.header.frame_id = 'fake_grabber'

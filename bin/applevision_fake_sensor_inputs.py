@@ -111,7 +111,7 @@ class CamPub:
         # offset each point to bring the origin to the corner of the image
         points += np.array([self.CAMERA_RES[0]/2, self.CAMERA_RES[1]/2])
         # add noise to each point in pixels
-        points += self._rng.normal(0, 5, points.shape)
+        points += self._rng.normal(0, 10, points.shape)
         # estimate a bounding box by finding the max and min of x, y
         x_hold = (0, 1e9)
         y_hold = (0, 1e9)

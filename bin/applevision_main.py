@@ -49,7 +49,8 @@ class MainHandler:
         control = np.transpose(np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z]))
 
         # publish the kalman filters predicted apple distance
-        if cam.w == 0 or cam.h == 0:
+        # if bounding box is on x edge, the variance is infinite
+        if cam.w == 0 or cam.h == 0 or cam.x == 0 or cam.x + cam.w == self.CAMERA_RES[0]:
             x_est, p_est, var = self.kal.step_filter(
                 (0, 0, 0, dist.range),
                 np.inf,
@@ -60,7 +61,6 @@ class MainHandler:
             # compute apple x, y based off of the bounding box width/height avg
             # TODO: how to fix this? it's unreliable
             # TODO: improve varience calculations
-            # TODO: fix when apple flies off screen
             # TODO: initialize robot in correct position
             est_frame_width_m = self.CAMERA_RES[0]/cam.w*(2*self.kal.env.apple_r)
             est_frame_height_m = est_frame_width_m*(self.CAMERA_RES[1]/self.CAMERA_RES[0])
@@ -70,12 +70,19 @@ class MainHandler:
             est_y = -(center_y - self.CAMERA_RES[1]/2)/self.CAMERA_RES[1]*est_frame_height_m
             est_z = (est_frame_width_m/2)*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0])
 
+            # frame_width_var_est = cam.w_var*(est_frame_width_m)**2
+            # x_var = cam.x_var*(2*self.kal.env.apple_r/cam.w)**2 + cam.w_var*(2*self.kal.env.apple_r/cam.w**2)**2
+            # y_var = cam.y_var*(2*self.kal.env.apple_r/cam.h)**2 + cam.h_var*(2*self.kal.env.apple_r/cam.h**2)**2
             frame_width_var_est = (1/cam.w_var**2)*(self.CAMERA_RES[0]*(2*self.kal.env.apple_r))**2
             x_var = (cam.x_var + cam.w_var*0.25 + frame_width_var_est)*(est_frame_width_m/self.CAMERA_RES[0])**2
             y_var = (cam.y_var + cam.h_var*0.25 + frame_width_var_est)*(est_frame_height_m/self.CAMERA_RES[1])**2
+            # multiply by a process noise factor to tweak this estimation
+            x_var *= 10
+            y_var *= 10
             if cam.w == self.CAMERA_RES[0]:
                 z_var = np.inf
             else:
+                # TODO: z var is still broken
                 z_var = frame_width_var_est*(0.5*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0]))**2
 
             # TODO: kalman filter will runaway sometimes?
@@ -88,7 +95,7 @@ class MainHandler:
 
         trans_out = TransformStamped()
         trans_out.header = self._header.get_header()
-        trans_out.header.frame_id = 'fake_apple'
+        trans_out.header.frame_id = 'fake_grabber'
         trans_out.child_frame_id = 'apple'
         trans_out.transform.rotation.w = 1
         trans_out.transform.translation.x = x_est[0]
@@ -119,8 +126,8 @@ def main():
 
     # TODO: Tune these
     env = EnvProperties(delta_t_ms=33,
-                        accel_std=0.01,
-                        starting_position=(0, 0, 0),
+                        accel_std=0.005,
+                        starting_position=(0, 0, 1),
                         starting_std=.4,
                         z_std=.005,
                         backdrop_dist=.5,
