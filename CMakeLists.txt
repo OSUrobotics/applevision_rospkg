@@ -164,7 +164,6 @@ include_directories(
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-   bin/moveit_proxy_run.py
    bin/applevision_fake_sensor_inputs.py
    bin/applevision_main.py
    bin/tf2_proxy_run.py

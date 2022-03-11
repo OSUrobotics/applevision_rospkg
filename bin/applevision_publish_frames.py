@@ -22,7 +22,7 @@ def make_tf(ts, frame_id, child_frame_id, x, y, z, rx=0, ry=0, rz=0, rw=1) -> ge
 def main():
     rospy.init_node('applevision_publish_frames')
 
-    pub_tf = rospy.Publisher("/tf", tf2_msgs.msg.TFMessage, queue_size=1)
+    pub_tf = rospy.Publisher("/tf_static", tf2_msgs.msg.TFMessage, queue_size=1, latch=True)
     # TODO: replace with real values
     now = rospy.Time.now()
     # frames are looking out from the robot arm with y pointed at target and z pointed up
@@ -32,18 +32,10 @@ def main():
     cam_tf = make_tf(now, 'fake_grabber', 'fake_grabber_cam', 0, 0, 0, rz=1, rw=0)
     apple_tf = make_tf(now, 'base_link', 'fake_apple', 0, 0.7, 0.5, ry=0.7071, rz=0.7071, rw=0)
     start_tf = make_tf(now, 'fake_apple', 'start_pos', 0, 0, -0.7)
+    pub_tf.publish((grabber_tf, dist_tf, cam_tf, apple_tf, start_tf))
 
-
-    rospy.loginfo('Publishing frames at 10Hz...')
-
-    rate = rospy.Rate(10)
-    while not rospy.is_shutdown():
-        msgs = [grabber_tf, dist_tf, cam_tf, apple_tf, start_tf]
-        for msg in msgs:
-            msg.header.stamp = rospy.Time.now()
-        tfm = tf2_msgs.msg.TFMessage(msgs)
-        pub_tf.publish(tfm)
-        rate.sleep()
+    rospy.loginfo('Publishing frames...')
+    rospy.spin()
 
 
 if __name__ == '__main__':

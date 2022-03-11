@@ -9,7 +9,6 @@ from applevision_rospkg.srv import Tf2Transform
 from threading import Lock
 import rospy
 import tf2_ros
-import tf2_geometry_msgs
 
 
 def main():
@@ -20,7 +19,10 @@ def main():
 
     def get_transform(req):
         with tf_buffer_lock:
-            return tf_buffer.lookup_transform(req.target_frame, req.source_frame, req.stamp, req.slop)
+            try:
+                return tf_buffer.lookup_transform(req.target_frame, req.source_frame, req.stamp, req.slop)
+            except Exception as e:
+                raise rospy.ServiceException(e)
 
     rospy.loginfo('Starting Tf2 server...')
     s = rospy.Service('Tf2Transform', Tf2Transform, get_transform)

@@ -11,6 +11,7 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from applevision_kalman.filter import KalmanFilter, EnvProperties
+from helpers.robust_serviceproxy import RobustServiceProxy, ServiceProxyFailed
 
 
 class HeaderCalc:
@@ -35,7 +36,7 @@ class MainHandler:
     CAMERA_FOCAL = 11e-3
 
     def __init__(self, topic: str, kal: KalmanFilter) -> None:
-        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self.p_out = rospy.Publisher(topic, PointWithCovarianceStamped, queue_size=10)
         self.viz_out = rospy.Publisher('applevision/est_apple_viz', PoseWithCovarianceStamped, queue_size=10)
         self.tf2_out = rospy.Publisher('tf', TFMessage, queue_size=10)
@@ -44,7 +45,11 @@ class MainHandler:
         self._gen = np.random.default_rng()
 
     def callback(self, dist: Range, cam: RegionOfInterestWithCovarianceStamped):
-        dist_to_apple = self.tf_get('start_pos', 'fake_grabber', rospy.Time(), rospy.Duration())
+        try:
+            dist_to_apple = self.tf_get('start_pos', 'fake_grabber', rospy.Time(), rospy.Duration())
+        except ServiceProxyFailed as e:
+            rospy.logwarn(f'tf_get service proxy failed with error {e}')
+            return
         trans: TransformStamped = dist_to_apple.transform
         control = np.transpose(np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z]))
 

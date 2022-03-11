@@ -12,6 +12,7 @@ from sensor_msgs.msg import Range
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
+from helpers.robust_serviceproxy import RobustServiceProxy, ServiceProxyFailed
 
 
 class HeaderCalc:
@@ -40,7 +41,7 @@ class CamVizHandler:
     CAMERA_FOCAL = 11e-3
 
     def __init__(self) -> None:
-        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self.p_out = rospy.Publisher('visualization_marker', Marker, queue_size=10)
         self._header = HeaderCalc('fake_grabber')
         self._gen = np.random.default_rng()
@@ -115,13 +116,14 @@ class CamVizHandler:
 
 class KalmanVizHandler:
     def __init__(self) -> None:
-        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self.p_out = rospy.Publisher('visualization_marker', Marker, queue_size=10)
 
     def callback(self, res: PointWithCovarianceStamped):
         try:
             dist_to_apple = self.tf_get('apple', 'fake_grabber', rospy.Time(), rospy.Duration())
-        except Exception:
+        except ServiceProxyFailed as e:
+            rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
         trans: TransformStamped = dist_to_apple.transform
         # draw an arrow from the grabber to where we think the apple is

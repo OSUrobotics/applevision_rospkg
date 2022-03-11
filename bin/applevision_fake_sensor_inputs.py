@@ -17,6 +17,7 @@ from tf2_msgs.msg import TFMessage
 from applevision_rospkg.msg import RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from applevision_kalman.model import ConeSensorModel
+from helpers.robust_serviceproxy import RobustServiceProxy, ServiceProxyFailed
 
 DISTANCE_PERIOD = rospy.Duration.from_sec(1/32)
 CAMERA_PERIOD = rospy.Duration.from_sec(1/32)
@@ -57,14 +58,18 @@ class HeaderCalc:
 class DistPub:
     def __init__(self, frame_id: str, topic: str) -> None:
         self.pub = rospy.Publisher(topic, Range, queue_size=10)
-        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self._header_calc = HeaderCalc(frame_id)
         self._cone_sensor_model = ConeSensorModel(1.5, APPLE_R, 0.001, np.random.default_rng())
 
     def callback(self, *args):
         # compute a fake distance based off of the robots position
         # TODO: drop random data points
-        dist_to_apple = self.tf_get('fake_apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+        try:
+            dist_to_apple = self.tf_get('fake_apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+        except ServiceProxyFailed as e:
+            rospy.logwarn(f'tf_get service proxy failed with error {e}')
+            return
         trans: TransformStamped = dist_to_apple.transform
         vect = (trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z)
         dist = self._cone_sensor_model.measure(vect)
@@ -82,7 +87,7 @@ class CamPub:
 
     def __init__(self, frame_id: str, topic: str) -> None:
         self.pub = rospy.Publisher(topic, RegionOfInterestWithCovarianceStamped, queue_size=10)
-        self.tf_get = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+        self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self._header_calc = HeaderCalc(frame_id)
         self._rng = np.random.default_rng()
 
@@ -101,7 +106,11 @@ class CamPub:
     def callback(self, *args):
         # TODO: flange frame is looking at robot
         # compute a fake bounding box based off of the robots position
-        dist_to_apple = self.tf_get('fake_apple', 'fake_grabber_cam', rospy.Time(), rospy.Duration())
+        try:
+            dist_to_apple = self.tf_get('fake_apple', 'fake_grabber_cam', rospy.Time(), rospy.Duration())
+        except ServiceProxyFailed as e:
+            rospy.logwarn(f'tf_get service proxy failed with error {e}')
+            return
         trans: TransformStamped = dist_to_apple.transform
         relative_to_apple = np.array((trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z))
         points_relative_to_apple = self._sphere_points + relative_to_apple
@@ -159,6 +168,7 @@ def make_fake_apple() -> CollisionObject:
 def main():
     rospy.init_node('applevision_fake_sensor_data')
     rospy.wait_for_service('apply_planning_scene')
+    rospy.wait_for_service('Tf2Transform')
 
     rospy.loginfo('Adding fake apple to rviz...')
     planning_service = rospy.ServiceProxy('apply_planning_scene', ApplyPlanningScene)
