@@ -1,5 +1,7 @@
 import time
 import rospy
+from std_msgs.msg import Header
+from geometry_msgs.msg import TransformStamped
 
 
 class ServiceProxyFailed(Exception):
@@ -30,3 +32,19 @@ class RobustServiceProxy(rospy.ServiceProxy):
 
     def __call__(self, *args, **kwds):
         return self.call_with_retry(*args, **kwds)
+
+
+class HeaderCalc:
+    def __init__(self, frame_id: str):
+        self.frame_id = frame_id
+        self._seq = 0
+
+    def get_header(self):
+        now = rospy.get_rostime()
+        fake_header = Header(seq=self._seq, stamp=now, frame_id=self.frame_id)
+        if self._seq >= 4294967295:  # uint32 max
+            self._seq = 0
+        else:
+            self._seq += 1
+
+        return fake_header

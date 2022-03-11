@@ -68,7 +68,11 @@
   <exec_depend>python3-opencv</exec_depend>
   <build_depend>roslaunch</build_depend>
   <exec_depend>rosserial_python</exec_depend>
-
+  <exec_depend>cv_camera</exec_depend>
+  <build_depend>cv_camera</build_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <build_depend>cv_bridge</build_depend>
+  <exec_depend>image_proc</exec_depend>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>

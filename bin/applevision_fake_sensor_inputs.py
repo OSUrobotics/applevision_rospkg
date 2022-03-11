@@ -1,58 +1,24 @@
 #!/usr/bin/python3
 
-import math
 import itertools
 import time
 import rospy
 import cv2
 import numpy as np
-from visualization_msgs.msg import Marker, MarkerArray
 from moveit_msgs.srv import ApplyPlanningScene
 from moveit_msgs.msg import CollisionObject, PlanningScene
 from shape_msgs.msg import SolidPrimitive
-from std_msgs.msg import Header, ColorRGBA
 from sensor_msgs.msg import Range
-from geometry_msgs.msg import Pose, TransformStamped, Point, Quaternion, Vector3
+from geometry_msgs.msg import Pose, TransformStamped
 from tf2_msgs.msg import TFMessage
 from applevision_rospkg.msg import RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from applevision_kalman.model import ConeSensorModel
-from helpers.robust_serviceproxy import RobustServiceProxy, ServiceProxyFailed
+from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc
 
 DISTANCE_PERIOD = rospy.Duration.from_sec(1/32)
 CAMERA_PERIOD = rospy.Duration.from_sec(1/32)
 APPLE_R = 0.04
-
-
-def make_tf(ts, frame_id, child_frame_id, x, y, z, rx=0, ry=0, rz=0, rw=1) -> TransformStamped:
-    tf = TransformStamped()
-    tf.header.frame_id = frame_id
-    tf.header.stamp = ts
-    tf.child_frame_id = child_frame_id
-    tf.transform.translation.x = x
-    tf.transform.translation.y = y
-    tf.transform.translation.z = z
-    tf.transform.rotation.x = rx
-    tf.transform.rotation.y = ry
-    tf.transform.rotation.z = rz
-    tf.transform.rotation.w = rw
-    return tf
-
-
-class HeaderCalc:
-    def __init__(self, frame_id: str):
-        self.frame_id = frame_id
-        self._seq = 0
-
-    def get_header(self):
-        now = rospy.get_rostime()
-        fake_header = Header(seq=self._seq, stamp=now, frame_id=self.frame_id)
-        if self._seq >= 4294967295:  # uint32 max
-            self._seq = 0
-        else:
-            self._seq += 1
-
-        return fake_header
 
 
 class DistPub:

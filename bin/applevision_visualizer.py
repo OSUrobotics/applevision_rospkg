@@ -12,23 +12,7 @@ from sensor_msgs.msg import Range
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
-from helpers.robust_serviceproxy import RobustServiceProxy, ServiceProxyFailed
-
-
-class HeaderCalc:
-    def __init__(self, frame_id: str):
-        self.frame_id = frame_id
-        self._seq = 0
-
-    def get_header(self):
-        now = rospy.get_rostime()
-        fake_header = Header(seq=self._seq, stamp=now, frame_id=self.frame_id)
-        if self._seq >= 4294967295:  # uint32 max
-            self._seq = 0
-        else:
-            self._seq += 1
-
-        return fake_header
+from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc
 
 
 class CamVizHandler:

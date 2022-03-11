@@ -14,6 +14,10 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   geometry_msgs
   roslaunch
+  cv_camera
+  cv_bridge
+  rosserial_python
+  tf2
 )
 
 ## System dependencies are found with CMake's conventions
@@ -169,6 +173,7 @@ catkin_install_python(PROGRAMS
    bin/tf2_proxy_run.py
    bin/applevision_publish_frames.py
    bin/applevision_visualizer.py
+   bin/applevision_vision.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

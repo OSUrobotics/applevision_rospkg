@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import rospy
 import tf2_msgs.msg
-import geometry_msgs.msg
+from geometry_msgs.msg import TransformStamped
 
 
-def make_tf(ts, frame_id, child_frame_id, x, y, z, rx=0, ry=0, rz=0, rw=1) -> geometry_msgs.msg.TransformStamped:
-    tf = geometry_msgs.msg.TransformStamped()
+def make_tf(ts, frame_id, child_frame_id, x, y, z, rx=0, ry=0, rz=0, rw=1) -> TransformStamped:
+    tf = TransformStamped()
     tf.header.frame_id = frame_id
     tf.header.stamp = ts
     tf.child_frame_id = child_frame_id
