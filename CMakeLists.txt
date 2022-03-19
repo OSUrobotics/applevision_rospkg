@@ -171,7 +171,6 @@ catkin_install_python(PROGRAMS
    bin/applevision_fake_sensor_inputs.py
    bin/applevision_main.py
    bin/tf2_proxy_run.py
-   bin/applevision_publish_frames.py
    bin/applevision_visualizer.py
    bin/applevision_vision.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

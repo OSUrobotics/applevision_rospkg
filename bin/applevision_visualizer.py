@@ -27,7 +27,7 @@ class CamVizHandler:
     def __init__(self) -> None:
         self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
         self.p_out = rospy.Publisher('visualization_marker', Marker, queue_size=10)
-        self._header = HeaderCalc('fake_grabber')
+        self._header = HeaderCalc('palm')
         self._gen = np.random.default_rng()
 
     def make_cam_fov_marker(self, z_extrap: float, cam_msg: RegionOfInterestWithCovarianceStamped):
@@ -39,7 +39,7 @@ class CamVizHandler:
         Y_AT_Z_EXTRAP = z_extrap*math.tan(CAM_FOV_UPDOWN/2)
 
         cam_mark = Marker()
-        cam_mark.header.frame_id = 'fake_grabber'
+        cam_mark.header.frame_id = 'palm'
         cam_mark.header.stamp = rospy.Time.now()
         cam_mark.ns = 'applevision_cam_fov'
         cam_mark.id = 0
@@ -64,7 +64,7 @@ class CamVizHandler:
 
         # draw the bounding box
         box_mark = Marker()
-        box_mark.header.frame_id = 'fake_grabber_cam'
+        box_mark.header.frame_id = 'palm_camera'
         box_mark.header.stamp = rospy.Time.now()
         box_mark.ns = 'applevision_cam_box'
         box_mark.id = 0
@@ -92,7 +92,8 @@ class CamVizHandler:
 
     def callback(self, cam: RegionOfInterestWithCovarianceStamped):
         # draw the cameras FOV and bounding box
-        dist_to_apple = self.tf_get('fake_apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+        dist_to_apple = self.tf_get('applevision_target', 'palm_camera', rospy.Time(), rospy.Duration())
+        print(dist_to_apple)
         markers = self.make_cam_fov_marker(dist_to_apple.transform.transform.translation.z, cam)
         for marker in markers:
             self.p_out.publish(marker)
@@ -105,14 +106,14 @@ class KalmanVizHandler:
 
     def callback(self, res: PointWithCovarianceStamped):
         try:
-            dist_to_apple = self.tf_get('apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+            dist_to_apple = self.tf_get('applevision_est', 'palm', rospy.Time(), rospy.Duration())
         except ServiceProxyFailed as e:
             rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
         trans: TransformStamped = dist_to_apple.transform
         # draw an arrow from the grabber to where we think the apple is
         arrow_mark = Marker()
-        arrow_mark.header.frame_id = 'fake_grabber'
+        arrow_mark.header.frame_id = 'palm'
         arrow_mark.header.stamp = rospy.Time.now()
         arrow_mark.ns = 'applevision_arrow'
         arrow_mark.id = 0

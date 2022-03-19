@@ -23,12 +23,12 @@ class MainHandler:
         self.viz_out = rospy.Publisher('applevision/est_apple_viz', PoseWithCovarianceStamped, queue_size=10)
         self.tf2_out = rospy.Publisher('tf', TFMessage, queue_size=10)
         self.kal = kal
-        self._header = HeaderCalc('fake_grabber')
+        self._header = HeaderCalc('palm')
         self._gen = np.random.default_rng()
 
     def callback(self, dist: Range, cam: RegionOfInterestWithCovarianceStamped):
         try:
-            dist_to_apple = self.tf_get('start_pos', 'fake_grabber', rospy.Time(), rospy.Duration())
+            dist_to_apple = self.tf_get('applevision_start_pos', 'palm', rospy.Time(), rospy.Duration())
         except ServiceProxyFailed as e:
             rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
@@ -82,8 +82,8 @@ class MainHandler:
 
         trans_out = TransformStamped()
         trans_out.header = self._header.get_header()
-        trans_out.header.frame_id = 'fake_grabber'
-        trans_out.child_frame_id = 'apple'
+        trans_out.header.frame_id = 'palm'
+        trans_out.child_frame_id = 'applevision_est'
         trans_out.transform.rotation.w = 1
         trans_out.transform.translation.x = x_est[0]
         trans_out.transform.translation.y = x_est[1]

@@ -1,10 +1,8 @@
 #!/usr/bin/python3
 
-# Install pytorch before using this file!
-
-import torch
 import rospy
 import cv2
+import time
 import numpy as np
 from sensor_msgs.msg import Image
 from cv_bridge.core import CvBridge
@@ -24,7 +22,7 @@ def format_yolov5(source): #Function taken from medium: https://medium.com/mlear
     resized = np.zeros((_max, _max, 3), np.uint8)
     resized[0:col, 0:row] = source
     # resize to 640x640, normalize to [0,1[ and swap Red and Blue channels
-    result = cv2.dnn.blobFromImage(resized, 1/255.0, (640, 640), swapRB=True)
+    result = cv2.dnn.blobFromImage(resized, 1/255.0, (640, 640)) #, swapRB=True)
     return result
 
 
@@ -71,8 +69,14 @@ class AppleVisionHandler:
         self._header = HeaderCalc(frame)
 
     def run_applevision(self, im: Image):
+        if rospy.Time.now() - im.header.stamp > rospy.Duration.from_sec(0.1):
+            # this frame is too old
+            rospy.logwarn('CV: Ignoring old frame')
+            return None
+
         # convert to cv2 image
-        frame = self._br.compressed_imgmsg_to_cv2(im)
+        start = time.time()
+        frame = self._br.imgmsg_to_cv2(im)
         adjusted_image = format_yolov5(frame)
         self.net.setInput(adjusted_image)
         predictions = self.net.forward()
@@ -126,6 +130,9 @@ class AppleVisionHandler:
         debug_im = self._br.cv2_to_imgmsg(frame)
         self.pub_debug.publish(debug_im)
 
+        end = time.time()
+        print(f'Took {end - start:.2f} secs')
+
 
 if __name__ == '__main__':
     rospy.init_node('applevision_fake_sensor_data')
@@ -135,7 +142,7 @@ if __name__ == '__main__':
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
     # TODO: add image_proc
-    vision_handler = AppleVisionHandler(net, 'applevision/apple_camera', 'fake_grabber_cam', 'applevision/debug_apple_camera')
-    sub = rospy.Subscriber('cv_camera/image_raw', Image, vision_handler.run_applevision, queue_size=10)
+    vision_handler = AppleVisionHandler(net, 'applevision/apple_camera', 'palm_camera', 'applevision/debug_apple_camera')
+    sub = rospy.Subscriber('palm_camera/image', Image, vision_handler.run_applevision, queue_size=20)
 
     rospy.spin()

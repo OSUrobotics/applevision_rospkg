@@ -5,9 +5,6 @@ import time
 import rospy
 import cv2
 import numpy as np
-from moveit_msgs.srv import ApplyPlanningScene
-from moveit_msgs.msg import CollisionObject, PlanningScene
-from shape_msgs.msg import SolidPrimitive
 from sensor_msgs.msg import Range
 from geometry_msgs.msg import Pose, TransformStamped
 from tf2_msgs.msg import TFMessage
@@ -32,12 +29,13 @@ class DistPub:
         # compute a fake distance based off of the robots position
         # TODO: drop random data points
         try:
-            dist_to_apple = self.tf_get('fake_apple', 'fake_grabber', rospy.Time(), rospy.Duration())
+            dist_to_apple = self.tf_get('applevision_target', 'palm_dist', rospy.Time(), rospy.Duration())
         except ServiceProxyFailed as e:
             rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
         trans: TransformStamped = dist_to_apple.transform
-        vect = (trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z)
+        # in this case x is the distance range, and z=-x in the robot coordinate space
+        vect = (trans.transform.translation.z, trans.transform.translation.y, -trans.transform.translation.x)
         dist = self._cone_sensor_model.measure(vect)
         self.pub.publish(header=self._header_calc.get_header(), radiation_type=Range.INFRARED, field_of_view=ConeSensorModel.FOV_RAD, min_range=0, max_range=1300, range=dist)
 
@@ -73,7 +71,7 @@ class CamPub:
         # TODO: flange frame is looking at robot
         # compute a fake bounding box based off of the robots position
         try:
-            dist_to_apple = self.tf_get('fake_apple', 'fake_grabber_cam', rospy.Time(), rospy.Duration())
+            dist_to_apple = self.tf_get('applevision_target', 'palm_camera', rospy.Time(), rospy.Duration())
         except ServiceProxyFailed as e:
             rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
@@ -116,33 +114,10 @@ class FakeAppleFramePub:
         self.pub.publish(TFMessage([self.apple_tf]))
 
 
-def make_fake_apple() -> CollisionObject:
-    solid = SolidPrimitive(SolidPrimitive.SPHERE, [APPLE_R])
-    pose = Pose()
-    pose.orientation.w = 1
-
-    fake_apple = CollisionObject()
-    fake_apple.header.frame_id = 'fake_apple'
-    fake_apple.id = 'fake_apple'
-    fake_apple.primitives = [solid]
-    fake_apple.primitive_poses = [pose]
-    fake_apple.operation = CollisionObject.ADD
-
-    return fake_apple
-
-
 def main():
     rospy.init_node('applevision_fake_sensor_data')
     rospy.wait_for_service('apply_planning_scene')
     rospy.wait_for_service('Tf2Transform')
-
-    rospy.loginfo('Adding fake apple to rviz...')
-    planning_service = rospy.ServiceProxy('apply_planning_scene', ApplyPlanningScene)
-    fake_apple = make_fake_apple()
-    planning_scene = PlanningScene()
-    planning_scene.is_diff = True
-    planning_scene.world.collision_objects = [fake_apple]
-    planning_service(planning_scene)
 
     rospy.loginfo('Starting fake sensor data...')
     rospy.wait_for_service('Tf2Transform')

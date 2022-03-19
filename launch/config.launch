@@ -1,4 +1,4 @@
 <launch>
-    <node name="applevision_publish_frames" pkg="applevision_rospkg" type="applevision_publish_frames.py" respawn="true" />
+    <include file="$(find applevision_rospkg)/launch/frames.launch" />    
     <node name="tf2_proxy_run" pkg="applevision_rospkg" type="tf2_proxy_run.py" respawn="true" />
 </launch>
