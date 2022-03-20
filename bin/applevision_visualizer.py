@@ -1,15 +1,10 @@
 #!/usr/bin/python3
 
-from typing import Tuple
 import rospy
 import math
 import numpy as np
-from std_msgs.msg import Header
-from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import TransformStamped, Point
-from sensor_msgs.msg import Range
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc

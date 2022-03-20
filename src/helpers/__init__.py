@@ -1,7 +1,6 @@
 import time
 import rospy
 from std_msgs.msg import Header
-from geometry_msgs.msg import TransformStamped
 
 
 class ServiceProxyFailed(Exception):

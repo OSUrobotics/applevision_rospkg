@@ -1,27 +1,15 @@
 <launch>
-    <include file="$(find ur_robot_driver)/launch/ur5e_bringup.launch">
-        <arg name="robot_ip"/>
-        <arg name="kinematics_config" default=""/>
-    </include>
-    <include file="$(find ur5e_moveit_config)/launch/ur5e_moveit_planning_execution.launch">
-        <arg name="limited" default="true" />
-    </include>
-    <include file="$(find ur5e_moveit_config)/launch/moveit_rviz.launch">
-        <arg name="config" defualt="true" />
-    </include>
     <node name="dist_rosserial" pkg="rosserial_python" type="serial_node.py">
         <param name="port" value="/dev/ttyACM0" />
         <!-- baud can be any value, serial port is virtual -->
         <param name="baud" value="115200" />
     </node>
-    <node name="cam_cv_camera" pkg="cv_camera" type="cv_camera_node">
+    <node name="cam_cv_camera" pkg="cv_camera" type="cv_camera_node" ns="palm_camera">
         <param name="device_id" value="0" />
         <param name="image_width" value="640" />
         <param name="image_height" value="360" />
     </node>
-    <node name="cam_image_proc" pkg="image_proc" type="image_proc">
-        <env name="ROS_NAMESPACE" value="cv_camera" />
-    </node>
+    <node name="cam_image_proc" pkg="image_proc" type="image_proc" ns="palm_camera" />
     <include file="$(find applevision_rospkg)/launch/config.launch" />
     <node name="applevision_visualizer" pkg="applevision_rospkg" type="applevision_visualizer.py" respawn="true" />
     <!-- <node name="applevision_main" pkg="applevision_rospkg" type="applevision_main.py" respawn="true" /> -->

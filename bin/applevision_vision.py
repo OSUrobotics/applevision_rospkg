@@ -22,7 +22,7 @@ def format_yolov5(source): #Function taken from medium: https://medium.com/mlear
     resized = np.zeros((_max, _max, 3), np.uint8)
     resized[0:col, 0:row] = source
     # resize to 640x640, normalize to [0,1[ and swap Red and Blue channels
-    result = cv2.dnn.blobFromImage(resized, 1/255.0, (640, 640)) #, swapRB=True)
+    result = cv2.dnn.blobFromImage(resized, 1/255.0, (640, 640), swapRB=True)
     return result
 
 
@@ -71,12 +71,12 @@ class AppleVisionHandler:
     def run_applevision(self, im: Image):
         if rospy.Time.now() - im.header.stamp > rospy.Duration.from_sec(0.1):
             # this frame is too old
-            rospy.logwarn('CV: Ignoring old frame')
+            rospy.logdebug('CV: Ignoring old frame')
             return None
 
         # convert to cv2 image
         start = time.time()
-        frame = self._br.imgmsg_to_cv2(im)
+        frame = self._br.imgmsg_to_cv2(im, 'bgr8')
         adjusted_image = format_yolov5(frame)
         self.net.setInput(adjusted_image)
         predictions = self.net.forward()
