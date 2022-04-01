@@ -127,8 +127,8 @@ def main():
     rospy.init_node('applevision_vizualizer')
     rospy.wait_for_service('Tf2Transform')
 
-    main_proc = CamVizHandler()
-    camera = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, main_proc.callback, queue_size=10)
+    # main_proc = CamVizHandler()
+    # camera = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, main_proc.callback, queue_size=10)
     kal_proc = KalmanVizHandler()
     kal = rospy.Subscriber('applevision/est_apple_pos', PointWithCovarianceStamped, kal_proc.callback, queue_size=10)
 
