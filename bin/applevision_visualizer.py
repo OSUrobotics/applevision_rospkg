@@ -10,6 +10,7 @@ from applevision_rospkg.srv import Tf2Transform
 from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc
 
 
+# TODO: rework to use camerainfo
 class CamVizHandler:
     # camera focal length ~ 11mm?
     # camera sensor size 5449umx3072um

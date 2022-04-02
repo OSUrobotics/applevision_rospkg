@@ -9,16 +9,18 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from applevision_kalman.filter import KalmanFilter, EnvProperties
-from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc
+from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc, CameraInfoHelper
+
+
+def second_order_var_approx(fprime, fdoubleprime, ftrippleprime, xvar):
+    # https://en.wikipedia.org/wiki/Taylor_expansions_for_the_moments_of_functions_of_random_variables
+    return fprime**2*xvar + 1/2*fdoubleprime**2*xvar**2 + fprime*ftrippleprime*xvar**2
 
 
 class MainHandler:
-    CAMERA_RES = (640, 360)
-    CAMERA_SENSOR = (5449*(640/672)*1e-6, 3072*(360/380)*1e-6)
-    CAMERA_FOCAL = 11e-3
-
     def __init__(self, topic: str, kal: KalmanFilter) -> None:
         self.tf_get = RobustServiceProxy('Tf2Transform', Tf2Transform, persistent=True)
+        self.cam_info = CameraInfoHelper('palm_camera/camera_info')
         self.p_out = rospy.Publisher(topic, PointWithCovarianceStamped, queue_size=10)
         self.viz_out = rospy.Publisher('applevision/est_apple_viz', PoseWithCovarianceStamped, queue_size=10)
         self.tf2_out = rospy.Publisher('tf', TFMessage, queue_size=10)
@@ -27,17 +29,22 @@ class MainHandler:
         self._gen = np.random.default_rng()
 
     def callback(self, dist: Range, cam: RegionOfInterestWithCovarianceStamped):
+        self.cam_info.wait_for_camera_info()
+        cam_info_obj = self.cam_info.get_last_camera_info()
+        cam_res = np.array([cam_info_obj.width, cam_info_obj.height])
+        cam_focal = np.array([cam_info_obj.P[0], cam_info_obj.P[5]])
+
         try:
-            dist_to_apple = self.tf_get('applevision_start_pos', 'palm', rospy.Time(), rospy.Duration())
+            dist_to_home = self.tf_get('palm', 'applevision_start_pos', rospy.Time(), rospy.Duration())
         except ServiceProxyFailed as e:
             rospy.logwarn(f'tf_get service proxy failed with error {e}')
             return
-        trans: TransformStamped = dist_to_apple.transform
+        trans: TransformStamped = dist_to_home.transform
         control = np.transpose(np.array([trans.transform.translation.x, trans.transform.translation.y, trans.transform.translation.z]))
 
         # publish the kalman filters predicted apple distance
         # if bounding box is on x edge, the variance is infinite
-        if cam.w == 0 or cam.h == 0 or cam.x == 0 or cam.x + cam.w == self.CAMERA_RES[0]:
+        if cam.w == 0 or cam.h == 0 or cam.x == 0 or cam.x + cam.w == cam_res[0]:
             x_est, p_est, var = self.kal.step_filter(
                 (0, 0, 0, dist.range),
                 np.inf,
@@ -49,28 +56,25 @@ class MainHandler:
             # TODO: how to fix this? it's unreliable
             # TODO: improve varience calculations
             # TODO: initialize robot in correct position
-            est_frame_width_m = self.CAMERA_RES[0]/cam.w*(2*self.kal.env.apple_r)
-            est_frame_height_m = est_frame_width_m*(self.CAMERA_RES[1]/self.CAMERA_RES[0])
-            center_x = cam.x + cam.w/2
-            center_y = cam.y + cam.h/2
-            est_x = -(center_x - self.CAMERA_RES[0]/2)/self.CAMERA_RES[0]*est_frame_width_m
-            est_y = -(center_y - self.CAMERA_RES[1]/2)/self.CAMERA_RES[1]*est_frame_height_m
-            est_z = (est_frame_width_m/2)*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0])
+            # TODO: this is wrong
+            est_z = cam_focal[0]*(2*self.kal.env.apple_r)/cam.w
+            center_x = cam.x + cam.w/2 - cam_res[0]/2
+            center_y = cam.y + cam.h/2 - cam_res[1]/2
+            est_x = center_x*est_z/cam_focal[0]
+            est_y = center_y*est_z/cam_focal[1]
 
-            # frame_width_var_est = cam.w_var*(est_frame_width_m)**2
-            # x_var = cam.x_var*(2*self.kal.env.apple_r/cam.w)**2 + cam.w_var*(2*self.kal.env.apple_r/cam.w**2)**2
-            # y_var = cam.y_var*(2*self.kal.env.apple_r/cam.h)**2 + cam.h_var*(2*self.kal.env.apple_r/cam.h**2)**2
-            frame_width_var_est = (1/cam.w_var**2)*(self.CAMERA_RES[0]*(2*self.kal.env.apple_r))**2
-            x_var = (cam.x_var + cam.w_var*0.25 + frame_width_var_est)*(est_frame_width_m/self.CAMERA_RES[0])**2
-            y_var = (cam.y_var + cam.h_var*0.25 + frame_width_var_est)*(est_frame_height_m/self.CAMERA_RES[1])**2
-            # multiply by a process noise factor to tweak this estimation
-            x_var *= 10
-            y_var *= 10
-            if cam.w == self.CAMERA_RES[0]:
-                z_var = np.inf
-            else:
-                # TODO: z var is still broken
-                z_var = frame_width_var_est*(0.5*((2*self.CAMERA_FOCAL)/self.CAMERA_SENSOR[0]))**2
+            z_const = cam_focal[0]*(2*self.kal.env.apple_r)
+            z_fprime = z_const*-1/cam.w**2
+            z_fdoubleprime = z_const*2/cam.w**3
+            z_ftrippleprime = z_const*-6/cam.w**4
+            z_var = second_order_var_approx(z_fprime, z_fdoubleprime, z_ftrippleprime, cam.w_var)
+
+            # assume x and w uncorrelated (probably not true)
+            center_x_var = cam.x_var + 1/4*cam.w_var
+            center_y_var = cam.x_var + 1/4*cam.w_var
+            # https://stats.stackexchange.com/questions/52646/variance-of-product-of-multiple-independent-random-variables
+            x_var = ((center_x_var + center_x**2)*(z_var + est_z**2) - (center_x*est_z)**2)*1/cam_focal[0]**2
+            y_var = ((center_y_var + center_y**2)*(z_var + est_z**2) - (center_y*est_z)**2)*1/cam_focal[0]**2
 
             # TODO: kalman filter will runaway sometimes?
             x_est, p_est, var = self.kal.step_filter(

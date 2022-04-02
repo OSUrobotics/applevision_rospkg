@@ -1,6 +1,9 @@
 import time
 import rospy
+from threading import Lock, Condition
 from std_msgs.msg import Header
+from sensor_msgs.msg import CameraInfo
+from message_filters import Cache, Subscriber
 
 
 class ServiceProxyFailed(Exception):
@@ -31,6 +34,32 @@ class RobustServiceProxy(rospy.ServiceProxy):
 
     def __call__(self, *args, **kwds):
         return self.call_with_retry(*args, **kwds)
+
+
+class CameraInfoHelper:
+    def __init__(self, camera_info_topic: str) -> None:
+        self.camera_info_topic = camera_info_topic
+        self._cache_lock = Lock()
+        self._cache_add_condition = Condition(self._cache_lock)
+        self._camera_info_sub = Subscriber(self.camera_info_topic, CameraInfo)
+        self._camera_info_cache = Cache(self._camera_info_sub, cache_size=1)
+        self._camera_info_cache.registerCallback(self._cache_add_callback)
+
+    def wait_for_camera_info(self):
+        with self._cache_add_condition:
+            while not len(self._camera_info_cache.cache_msgs):
+                self._cache_add_condition.wait()
+
+    def get_last_camera_info(self) -> CameraInfo:
+        with self._cache_lock:
+            ret = self._camera_info_cache.getLast()
+        if ret is None:
+            raise RuntimeError('Camera info not recieved yet')
+        return ret
+
+    def _cache_add_callback(self, *args):
+        with self._cache_add_condition:
+            self._cache_add_condition.notify_all()
 
 
 class HeaderCalc:

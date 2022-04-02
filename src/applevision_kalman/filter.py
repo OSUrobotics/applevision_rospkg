@@ -106,7 +106,7 @@ class KalmanFilter():
         self.appl_high = appl_proportion_high
 
         self.mtx = KalmanMatricies.make_for_robot_model(env)
-        self.x_est = np.transpose(env.starting_position)
+        self.x_est_base = np.transpose(env.starting_position)
         self.p_est = np.eye(3) * self.env.starting_std**2
 
     @staticmethod
@@ -175,18 +175,22 @@ class KalmanFilter():
     def step_filter(self, meas_pos: Tuple, varx: float, vary: float, varz: float,
                     control: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         meas = np.transpose(meas_pos)
-        # this matrix may have infinity
-        var = self._compute_var(meas_pos, varx, vary, varz, np.transpose(self.x_est))
 
-        # TODO: improve control matrix handling
+        # The kalman filter is with respect to a fixed starting point, but the
+        # measurements are with respect to the end effector. These two
+        # coordinate systems are resolved in the filter using some hacky
+        # adding and subtracting of the offset between the two.
         ctrl_off = self.mtx.G @ control
-        x_predict_real = self.x_est + ctrl_off
-        self.last_ctrl = control
+        x_predict_ee = self.x_est_base - ctrl_off
+
+        # this matrix may have infinity
+        var = self._compute_var(meas_pos, varx, vary, varz, np.transpose(x_predict_ee))
+
         p_predict = self.mtx.F @ self.p_est @ np.transpose(self.mtx.F) + self.mtx.Q
         K = p_predict @ np.transpose(
             self.mtx.H) @ np.linalg.inv(self.mtx.H @ p_predict @ np.transpose(self.mtx.H) + var)
-        self.x_est_real = x_predict_real + K @ (meas - self.mtx.H @ x_predict_real)
-        self.x_est = self.x_est_real - ctrl_off
+        x_est_ee = x_predict_ee + K @ (meas - self.mtx.H @ x_predict_ee)
+        self.x_est_base = x_est_ee + ctrl_off
         # replace inf with a very large number to prevent nans being generated when inf*0 occurs
         var = np.nan_to_num(var, nan=0, posinf=1e9)
         fact = (self.mtx.I - K @ self.mtx.H)
@@ -195,4 +199,4 @@ class KalmanFilter():
 
         assert np.all(var >= 0)
 
-        return self.x_est_real, self.p_est, var
+        return x_est_ee, self.p_est, var

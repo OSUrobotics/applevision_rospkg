@@ -106,7 +106,7 @@ class AppleVisionHandler:
                 y=boxes[0][1],
                 w=boxes[0][2],
                 h=boxes[0][3],
-                x_var=100, y_var=100, w_var=100, h_var=100)
+                x_var=30**2, y_var=30**2, w_var=30**2, h_var=30**2)
             self.pub.publish(msg)
 
             # attempted to put in json format string
