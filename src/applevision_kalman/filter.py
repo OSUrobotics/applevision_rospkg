@@ -62,15 +62,10 @@ class KalmanMatricies:
     @staticmethod
     def make_for_robot_model(env: EnvProperties) -> 'KalmanMatricies':
         t = env.delta_t
-        F = np.eye(3) # not used currently
+        F = np.eye(3)  # not used currently
         G = np.eye(3)
         Q = env.accel_std**2 * G @ np.transpose(G)
-        H = np.array([
-            [1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-            [0, 0, 1]
-        ])
+        H = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 1]])
         I = np.eye(H.shape[1], H.shape[1])
 
         return KalmanMatricies(F, G, Q, H, I)
@@ -98,10 +93,11 @@ class KalmanMatricies:
 
 class KalmanFilter():
 
-    def __init__(self, env: EnvProperties, std_range: float, appl_proportion_low: float,
-                 appl_proportion_high: float) -> None:
+    def __init__(self, env: EnvProperties, std_range: float, too_close_cam: float,
+                 appl_proportion_low: float, appl_proportion_high: float) -> None:
         self.env = env
         self.std_range = std_range
+        self.too_close_cam = too_close_cam
         self.appl_low = appl_proportion_low
         self.appl_high = appl_proportion_high
 
@@ -121,22 +117,33 @@ class KalmanFilter():
             return 0
         return clip(area_apple_in_fov / (np.pi * fov_at_apple_rad**2), 0, 1)
 
-    def _compute_var(self, mes_pos: Tuple, varx: float, vary: float, varz: float, est_pos: Vec3) -> float:
+    def _compute_var(self, mes_pos: Tuple, varx: float, vary: float, varz: float,
+                     est_pos: Vec3) -> float:
         mx, my, mzc, mzd = mes_pos
         ex, ey, ez = est_pos
-        # determine if the apple is likely to be >80% of the FOV (we'll use 1.5sigma)
-        x_err = np.sqrt(varx) * self.std_range
-        minmax_x = (ex + x_err, ex - x_err, mx)
-        y_err = np.sqrt(vary) * self.std_range
-        minmax_y = (ey + y_err, ey - y_err, my)
-        z_err = self.env.z_std * self.std_range
-        all_pos_per_apple_in_fov = [
-            KalmanFilter._calc_per_apple_in_fov(self.env, (x, y, mzd + z_err))
-            for x, y in itertools.product(minmax_x, minmax_y)
-        ]
+
+        # if any of varx, vary, varz is infinite or the distance is too close
+        # for the camera, fallback to using the estimated position to compute
+        # variance hope we've figured it out by now
+        if np.any(np.isposinf((varx, vary, varz))) or mzd < self.too_close_cam:
+            min_per_apple_in_fov = KalmanFilter._calc_per_apple_in_fov(self.env, (ex, ey, mzd))
+            varx, vary, varz = np.inf, np.inf, np.inf
+        else:
+            # determine if the apple is likely to be >80% of the FOV (we'll use 1.5sigma)
+            x_err = np.sqrt(varx) * self.std_range
+            minmax_x = (ex + x_err, ex - x_err, mx)
+            y_err = np.sqrt(vary) * self.std_range
+            minmax_y = (ey + y_err, ey - y_err, my)
+            z_err = self.env.z_std * self.std_range
+            all_pos_per_apple_in_fov = [
+                KalmanFilter._calc_per_apple_in_fov(self.env, (x, y, mzd + z_err))
+                for x, y in itertools.product(minmax_x, minmax_y)
+            ]
+
+            min_per_apple_in_fov = min(all_pos_per_apple_in_fov)
 
         # compute predicted varience
-        if min(all_pos_per_apple_in_fov) < self.appl_low:
+        if min_per_apple_in_fov < self.appl_low:
             # this measurement is unlikely to be accurate, therefore our variance is maximum
             # varz = self.env.backdrop_dist**2
             varz_dist = np.inf
@@ -165,11 +172,7 @@ class KalmanFilter():
                                      (2 * expected_fov_at_apple_rad)) * (vary + ex + ey**2)
                 covzcy = self.env.backdrop_dist * eacy
         # TODO: covarience is broken
-        var = np.array([
-            [varx, 0, 0, 0],
-            [0, vary, 0,  0],
-            [0, 0, varz, 0],
-            [0, 0, 0, varz_dist]])
+        var = np.array([[varx, 0, 0, 0], [0, vary, 0, 0], [0, 0, varz, 0], [0, 0, 0, varz_dist]])
         return np.maximum(var, 0)
 
     def step_filter(self, meas_pos: Tuple, varx: float, vary: float, varz: float,
