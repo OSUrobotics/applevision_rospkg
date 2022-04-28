@@ -48,6 +48,8 @@ class ConeSensorModel:
 
     def measure(self, apple_pos: Vector3) -> float:
         rx, ry, rz = apple_pos
+        # treat rz in terms of the apples surface
+        rz -= self.apple_rad
 
         # calculate the percantage of the FOV which contains apple
         per_apple_in_fov = self.calc_per_apple_in_fov(rx, ry, rz)
@@ -55,15 +57,17 @@ class ConeSensorModel:
         # print(f'Apple fov: {per_apple_in_fov*100:.2f}%')
         # > 80% means the apple is basically correct
         if per_apple_in_fov >= .8:
-            mz = rz - self.apple_rad + self.rng.normal(0, self.stddev)
+            mz = rz
 
         # < 80% means we get a linear interpolation between the apples center
         # and the backdrop
+        elif per_apple_in_fov > 0:
+            per_blur = .8 - per_apple_in_fov
+            mz = rz * (1 - per_blur) + self.backdrop_dist * per_blur
         else:
-            temp_z = rz + self.backdrop_dist * (1 - per_apple_in_fov)
-            mz = temp_z - self.apple_rad + self.rng.normal(0, self.stddev)
+            mz = self.backdrop_dist
 
-        return mz
+        return max(0, mz + self.rng.normal(0, self.stddev))
 
 
 class NormalCameraModel:
