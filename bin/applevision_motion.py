@@ -78,6 +78,11 @@ class approachPlanner(object):
         self.aCLast = None
         self.aDLast = None
 
+        self.pixelTolerance  =   0
+        self.distTolerance   =   0.3
+
+        self.pixelStep
+
     def aCCallback(self, res):
         if self.aCLast == None:
             self.aCLast = res
@@ -113,16 +118,27 @@ class approachPlanner(object):
             CURCAM_PT   = (aC.x + aC.w // 2, aC.y + aC.h // 2)
             CURCAM_VEC  = (self.CENTER_PT[0] - CURCAM_PT[0], self.CENTER_PT[1] - CURCAM_PT[1])
 
-            tolerance = 50
-
             # Check if Camera is Centered
-            if np.linalg.norm(np.array(CURCAM_VEC)) > tolerance:
+            if np.linalg.norm(np.array(CURCAM_VEC)) > self.pixelTolerance:
                 self.centerCamera(aC)
-            
+
+            # Advance closer to apple, this always happens after a potential trajectory correction step
+
+            if aD.range > self.distTolerance:
+                self.forwardStep()
+                pass
+            else:
+                # Terminate Process
+                # self.wrapUp()
+                pass
+
 
             # rospy.logwarn(CURCAM_VEC)
             # rospy.logwarn(aD)
-        pass
+
+    def wrapUp(self):
+        rospy.logwarn("Terminating Motion Sequence")
+        rospy.signal_shutdown("End Position Reached") 
 
     # Assumed Camera is in view when executed
     def centerCamera(self, c):
@@ -172,7 +188,11 @@ class approachPlanner(object):
 
             rospy.logwarn_once([eefP, eefP_palm, eefP_world])
 
+    def forwardStep(self):
+
         
+
+        pass
 
 def main():
     
