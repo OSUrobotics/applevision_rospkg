@@ -1,3 +1,3 @@
 [submodule "src/applevision_vision"]
 	path = src/applevision_vision
-	url = git@github.com:osuapplevision/computer-vision.git
+	url = https://github.com/osuapplevision/computer-vision.git
