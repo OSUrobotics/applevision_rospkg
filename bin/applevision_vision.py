@@ -10,11 +10,12 @@ from applevision_rospkg.msg import RegionOfInterestWithCovarianceStamped
 from helpers import HeaderCalc
 from applevision_vision import MODEL_PATH
 
-
 CONFIDENCE_THRESH = 0.5
 
 
-def format_yolov5(source): #Function taken from medium: https://medium.com/mlearning-ai/detecting-objects-with-yolov5-opencv-python-and-c-c7cf13d1483c
+def format_yolov5(
+    source
+):  #Function taken from medium: https://medium.com/mlearning-ai/detecting-objects-with-yolov5-opencv-python-and-c-c7cf13d1483c
     # YOLOV5 needs a square image. Basically, expanding the image to a square
     # put the image in square big enough
     col, row, _ = source.shape
@@ -22,7 +23,7 @@ def format_yolov5(source): #Function taken from medium: https://medium.com/mlear
     resized = np.zeros((_max, _max, 3), np.uint8)
     resized[0:col, 0:row] = source
     # resize to 640x640, normalize to [0,1[ and swap Red and Blue channels
-    result = cv2.dnn.blobFromImage(resized, 1/255.0, (640, 640), swapRB=True)
+    result = cv2.dnn.blobFromImage(resized, 1 / 255.0, (640, 640), swapRB=True)
     return result
 
 
@@ -50,7 +51,8 @@ def unwrap_detection(input_image, output_data):
                 confidences.append(confidence)
                 class_ids.append(class_id)
 
-                x, y, w, h = row[0].item(), row[1].item(), row[2].item(), row[3].item() 
+                x, y, w, h = row[0].item(), row[1].item(), row[2].item(
+                ), row[3].item()
                 left = int((x - 0.5 * w) * x_factor)
                 top = int((y - 0.5 * h) * y_factor)
                 width = int(w * x_factor)
@@ -61,10 +63,16 @@ def unwrap_detection(input_image, output_data):
 
 
 class AppleVisionHandler:
-    def __init__(self, net, topic: str, frame: str, debug_frame_topic: str) -> None:
+
+    def __init__(self, net, topic: str, frame: str,
+                 debug_frame_topic: str) -> None:
         self.net = net
-        self.pub = rospy.Publisher(topic, RegionOfInterestWithCovarianceStamped, queue_size=10)
-        self.pub_debug = rospy.Publisher(debug_frame_topic, Image, queue_size=10)
+        self.pub = rospy.Publisher(topic,
+                                   RegionOfInterestWithCovarianceStamped,
+                                   queue_size=10)
+        self.pub_debug = rospy.Publisher(debug_frame_topic,
+                                         Image,
+                                         queue_size=10)
         self._br = CvBridge()
         self._header = HeaderCalc(frame)
 
@@ -97,7 +105,8 @@ class AppleVisionHandler:
         # print(confidences, boxes, "\n")
         if len(confidences) > 0:
             # Order them for fast indexing later
-            confidences, boxes = zip(*sorted(zip(confidences,boxes), reverse=True))
+            confidences, boxes = zip(
+                *sorted(zip(confidences, boxes), reverse=True))
 
             # TODO: base varience off of confidence
             msg = RegionOfInterestWithCovarianceStamped(
@@ -106,7 +115,10 @@ class AppleVisionHandler:
                 y=boxes[0][1],
                 w=boxes[0][2],
                 h=boxes[0][3],
-                x_var=30**2, y_var=30**2, w_var=30**2, h_var=30**2)
+                x_var=30**2,
+                y_var=30**2,
+                w_var=30**2,
+                h_var=30**2)
             self.pub.publish(msg)
 
             # attempted to put in json format string
@@ -118,13 +130,21 @@ class AppleVisionHandler:
             conf = confidences[0]
             color = (255, 255, 0)
             cv2.rectangle(frame, box, color, 2)
-            cv2.rectangle(frame, (box[0], box[1] - 20), (box[0] + box[2], box[1]), color, -1)
-            cv2.putText(frame, "Apple", (box[0] + 5, box[1] - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0))
+            cv2.rectangle(frame, (box[0], box[1] - 20),
+                          (box[0] + box[2], box[1]), color, -1)
+            cv2.putText(frame, "Apple", (box[0] + 5, box[1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
         else:
             msg = RegionOfInterestWithCovarianceStamped(
                 header=self._header.get_header(),
-                x=0, y=0, w=0, h=0,
-                x_var=np.inf, y_var=np.inf, w_var=np.inf, h_var=np.inf)
+                x=0,
+                y=0,
+                w=0,
+                h=0,
+                x_var=np.inf,
+                y_var=np.inf,
+                w_var=np.inf,
+                h_var=np.inf)
             self.pub.publish(msg)
 
         debug_im = self._br.cv2_to_imgmsg(frame)
@@ -142,7 +162,12 @@ if __name__ == '__main__':
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA_FP16)
 
     # TODO: add image_proc
-    vision_handler = AppleVisionHandler(net, 'applevision/apple_camera', 'palm_camera', 'applevision/debug_apple_camera')
-    sub = rospy.Subscriber('palm_camera/image', Image, vision_handler.run_applevision, queue_size=20)
+    vision_handler = AppleVisionHandler(net, 'applevision/apple_camera',
+                                        'palm_camera',
+                                        'applevision/debug_apple_camera')
+    sub = rospy.Subscriber('palm_camera/image_rect_color',
+                           Image,
+                           vision_handler.run_applevision,
+                           queue_size=20)
 
     rospy.spin()

@@ -9,7 +9,6 @@
         <param name="image_width" value="640" />
         <param name="image_height" value="360" />
     </node>
-    <node name="cam_image_proc" pkg="image_proc" type="image_proc" ns="palm_camera" />
     <include file="$(find applevision_rospkg)/launch/config.launch" />
     <node name="applevision_visualizer" pkg="applevision_rospkg" type="applevision_visualizer.py" respawn="true" />
     <!-- <node name="applevision_main" pkg="applevision_rospkg" type="applevision_main.py" respawn="true" /> -->
