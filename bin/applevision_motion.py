@@ -50,26 +50,6 @@ class approachPlanner(object):
 
         self.success_or_failure_publilsher = rospy.Publisher('/success_or_failure', std_msgs.msg.String, queue_size=20)
 
-        # We can get the name of the reference frame for this robot:
-        planning_frame = self.move_group.get_planning_frame()
-        print "============ Planning frame: %s" % planning_frame
-
-        # We can also print the name of the end-effector link for this group:
-        eef_link = self.move_group.get_end_effector_link()
-        print "============ End effector link: %s" % eef_link
-
-        # We can get a list of all the groups in the robot:
-        group_names = self.robot.get_group_names()
-        print "============ Available Planning Groups:", self.robot.get_group_names()
-
-        # Sometimes for debugging it is useful to print the entire state of the
-        # robot:
-        print "============ Printing robot state"
-        print self.robot.get_current_state()
-        print ""
-
-        # applevision camera
-
         self.tf_listener_ = tf.TransformListener()
 
         self.CAMERA_RES = (640, 360)
@@ -78,10 +58,13 @@ class approachPlanner(object):
         self.aCLast = None
         self.aDLast = None
 
-        self.pixelTolerance  =   0
+        self.pixelTolerance  =   10
         self.distTolerance   =   0.3
 
-        self.pixelStep
+        # self.pixelStep
+
+    def toCenterCoord(q):
+        return (q.x + q.w // 2, q.y + q.h // 2)
 
     def aCCallback(self, res):
         if self.aCLast == None:
@@ -119,78 +102,107 @@ class approachPlanner(object):
             CURCAM_VEC  = (self.CENTER_PT[0] - CURCAM_PT[0], self.CENTER_PT[1] - CURCAM_PT[1])
 
             # Check if Camera is Centered
-            if np.linalg.norm(np.array(CURCAM_VEC)) > self.pixelTolerance:
-                self.centerCamera(aC)
-
-            # Advance closer to apple, this always happens after a potential trajectory correction step
-
-            if aD.range > self.distTolerance:
-                self.forwardStep()
-                pass
-            else:
-                # Terminate Process
-                # self.wrapUp()
-                pass
-
-
-            # rospy.logwarn(CURCAM_VEC)
-            # rospy.logwarn(aD)
+            if np.abs(CURCAM_VEC[0]) > self.pixelTolerance or np.abs(CURCAM_VEC[1]) > self.pixelTolerance:
+                rospy.logwarn("Centering")
+                self.centerCamera(aC, CURCAM_VEC)
+            else:   # Advance closer to apple, this always happens after a potential trajectory correction step
+                if aD.range > self.distTolerance:
+                    msg = "Approaching, t-" + str(aD.range - self.distTolerance)
+                    rospy.logwarn(msg)
+                    self.forwardStep(aD)
+                    pass
+                else:
+                    # Terminate Process
+                    rospy.logwarn("Done!")
+                    # self.wrapUp()
+                    pass
 
     def wrapUp(self):
         rospy.logwarn("Terminating Motion Sequence")
         rospy.signal_shutdown("End Position Reached") 
 
     # Assumed Camera is in view when executed
-    def centerCamera(self, c):
+    def centerCamera(self, c, CURCAM_VEC):
         # Check for target in FOV
         if (c.w or c.h):
             # target found
 
-            # Transform pixel coordinates and generate pixel space vector to center
-            CURCAM_PT   = (c.x + c.w // 2, c.y + c.h // 2)
-            CURCAM_VEC  = (self.CENTER_PT[0] - CURCAM_PT[0], self.CENTER_PT[1] - CURCAM_PT[1])
+            CURCAM_VECn = (CURCAM_VEC[0]/np.linalg.norm(CURCAM_VEC),CURCAM_VEC[1]/np.linalg.norm(CURCAM_VEC))
 
-            mag = np.linalg.norm(np.array(CURCAM_VEC))
+            if np.abs(CURCAM_VEC[0]) > self.pixelTolerance:
 
-            CURCAM_VEC = (CURCAM_VEC[0]/mag,CURCAM_VEC[1]/mag)
+                # End Effector Position [world]
+                eefP = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
 
-            # Generated direction to move in, generating move it move
+                # We can get the joint values from the group and adjust some of the values:
+                joint_goal = self.move_group.get_current_joint_values()
+                joint_goal[0] += (CURCAM_VECn[0] * 0.1)
 
-            # End Effector Position [world]
-            eefP = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
+                self.move_group.go(joint_goal, wait=True)
+                self.move_group.stop()
 
-            # Convert to frame palm
+            if np.abs(CURCAM_VEC[1]) > self.pixelTolerance:
 
-            t = self.tf_listener_.getLatestCommonTime("/world", "/palm")
-            p1 = geometry_msgs.msg.PoseStamped()
-            p1.header.frame_id = "/palm"
-            p1.pose = eefP.pose
+                # End Effector Position [world]
+                eefP = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
 
-            # End Effector Position [Palm]
+                # We can get the joint values from the group and adjust some of the values:
+                joint_goal = self.move_group.get_current_joint_values()
+                joint_goal[1] += (CURCAM_VECn[0] * 0.01)
 
-            eefP_palm = self.tf_listener_.transformPose("/palm", p1)
+                self.move_group.go(joint_goal, wait=True)
+                self.move_group.stop()
 
-            stepSize = 1
+    
 
-            # eefP_palm.pose.position.x += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
-            # eefP_palm.pose.position.y += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
-
-            # Convert [Palm] back to [world]
-
-            t = self.tf_listener_.getLatestCommonTime("/palm", "/world")
-            p2 = geometry_msgs.msg.PoseStamped()
-            p2.header.frame_id = "/world"
-            p2.pose = eefP_palm.pose
-
-            # End Effector Position [world] (updated)
-
-            eefP_world = self.tf_listener_.transformPose("/world", p2)
-
-            rospy.logwarn_once([eefP, eefP_palm, eefP_world])
-
-    def forwardStep(self):
-
+    def forwardStep(self, d):
         
+        rospy.logwarn((d.range - self.distTolerance))
+        if d.range > self.distTolerance:
+
+            pose_goal = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
+
+            pose_goal.pose.position.y += 0.1
+
+            plan = self.move_group.set_pose_target(pose_goal)
+
+            rospy.logwarn("Premotion...")
+
+            self.move_group.go(wait=True)
+
+            rospy.logwarn("Postmotion...")
+
+            self.move_group.stop()
+
+
+        # Convert to frame palm
+
+        # t = self.tf_listener_.getLatestCommonTime("/world", "/palm")
+        # p1 = geometry_msgs.msg.PoseStamped()
+        # p1.header.frame_id = "/palm"
+        # p1.pose = eefP.pose
+
+        # End Effector Position [Palm]
+
+        # eefP_palm = self.tf_listener_.transformPose("/palm", p1)
+
+        # stepSize = 1
+
+        # eefP_palm.pose.position.x += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
+        # eefP_palm.pose.position.y += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
+
+        # Convert [Palm] back to [world]
+
+        # t = self.tf_listener_.getLatestCommonTime("/palm", "/world")
+        # p2 = geometry_msgs.msg.PoseStamped()
+        # p2.header.frame_id = "/world"
+        # p2.pose = eefP_palm.pose
+
+        # End Effector Position [world] (updated)
+
+        # eefP_world = self.tf_listener_.transformPose("/world", p2)
+
+        # rospy.logwarn_once([eefP, eefP_palm, eefP_world])
 
         pass
 
@@ -202,7 +214,7 @@ def main():
 
         aP = approachPlanner()
 
-        aCpub = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, aP.aCCallback, queue_size=10)
+        aCpub = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, aP.aCCallback, queue_size=1)
         aDPub = rospy.Subscriber('applevision/apple_dist', Range, aP.aDCallback, queue_size=10)
 
         rospy.spin()
