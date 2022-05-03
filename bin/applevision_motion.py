@@ -52,19 +52,23 @@ class approachPlanner(object):
 
         self.tf_listener_ = tf.TransformListener()
 
-        self.CAMERA_RES = (640, 360)
-        self.CENTER_PT  = (self.CAMERA_RES[0]//2, self.CAMERA_RES[1]//2)
+        self.CAMERA_RES = np.array((640, 360))
+        self.CENTER_PT  = self.CAMERA_RES // 2
 
         self.aCLast = None
         self.aDLast = None
 
         self.pixelTolerance  =   10
-        self.distTolerance   =   0.3
+        self.distTolerance   =   0.1
+        self.deadReck = 0.2
 
-        # self.pixelStep
+        self.scale  = np.array((0.001,0.001))
 
-    def toCenterCoord(q):
-        return (q.x + q.w // 2, q.y + q.h // 2)
+        self.A      = None
+        self.B      = None
+
+    def toCenterCoord(self, q):
+        return np.array((q.x + q.w // 2, q.y + q.h // 2))
 
     def aCCallback(self, res):
         if self.aCLast == None:
@@ -84,12 +88,10 @@ class approachPlanner(object):
             return
 
         # Pull values for inspection
-
         aC = self.aCLast
         aD = self.aDLast
 
         # Sanitize workspace
-
         self.aCLast = None
         self.aDLast = None
 
@@ -97,63 +99,84 @@ class approachPlanner(object):
         if (aC.w or aC.h):
             # target found
 
-            # Transform pixel coordinates and generate pixel space vector to center
-            CURCAM_PT   = (aC.x + aC.w // 2, aC.y + aC.h // 2)
-            CURCAM_VEC  = (self.CENTER_PT[0] - CURCAM_PT[0], self.CENTER_PT[1] - CURCAM_PT[1])
+            cP = self.toCenterCoord(aC)
 
-            # Check if Camera is Centered
-            if np.abs(CURCAM_VEC[0]) > self.pixelTolerance or np.abs(CURCAM_VEC[1]) > self.pixelTolerance:
-                rospy.logwarn("Centering")
-                self.centerCamera(aC, CURCAM_VEC)
-            else:   # Advance closer to apple, this always happens after a potential trajectory correction step
-                if aD.range > self.distTolerance:
+            if aD.range > self.distTolerance and aD.range > self.deadReck:
+                # Advance closer to apple, this always happens after a potential trajectory correction step
+                # Check if Camera is Centered
+                if np.linalg.norm(self.CENTER_PT - cP) > self.pixelTolerance:
+                    rospy.logwarn("Centering")
+                    self.centerCamera(aC, aD)
+                else:
                     msg = "Approaching, t-" + str(aD.range - self.distTolerance)
                     rospy.logwarn(msg)
+                    rospy.logwarn(aD.range)
                     self.forwardStep(aD)
                     pass
-                else:
-                    # Terminate Process
-                    rospy.logwarn("Done!")
-                    # self.wrapUp()
-                    pass
+            elif aD.range > self.distTolerance and aD.range < self.deadReck:
+                # Stop Checking for camera, start the full aproach
+                msg = "Approaching (dead), t-" + str(aD.range - self.distTolerance)
+                rospy.logwarn(msg)
+                self.forwardStep(aD)
+            else:
+                # Terminate Process
+                rospy.logwarn("Done!")
+                # self.wrapUp()
+                pass
 
     def wrapUp(self):
         rospy.logwarn("Terminating Motion Sequence")
         rospy.signal_shutdown("End Position Reached") 
 
     # Assumed Camera is in view when executed
-    def centerCamera(self, c, CURCAM_VEC):
+    def centerCamera(self, c, d):
         # Check for target in FOV
         if (c.w or c.h):
             # target found
 
-            CURCAM_VECn = (CURCAM_VEC[0]/np.linalg.norm(CURCAM_VEC),CURCAM_VEC[1]/np.linalg.norm(CURCAM_VEC))
+            # Transform pixel coordinates and generate pixel space vector to center
 
-            if np.abs(CURCAM_VEC[0]) > self.pixelTolerance:
+            CURCAM_PT   = np.array((c.x + c.w // 2, c.y + c.h // 2))
 
+            if self.A is None or self.B is None:
+                # 1st Move
+
+                # Point (B) -> (A.t)
+                self.A = CURCAM_PT
+                self.B = self.CENTER_PT
+
+                # X Component, Hip
                 # End Effector Position [world]
-                eefP = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
-
-                # We can get the joint values from the group and adjust some of the values:
                 joint_goal = self.move_group.get_current_joint_values()
-                joint_goal[0] += (CURCAM_VECn[0] * 0.1)
+
+                # Normalization Hack: https://stackoverflow.com/questions/21030391/how-to-normalize-a-numpy-array-to-a-unit-vector
+                # v / (np.linalg.norm(v) + 1e-16)
+
+                v = (self.B - self.A)
+
+                joint_goal[0] += (v[0] * self.scale[0])
+                joint_goal[1] -= (v[1] * self.scale[1])
 
                 self.move_group.go(joint_goal, wait=True)
                 self.move_group.stop()
 
-            if np.abs(CURCAM_VEC[1]) > self.pixelTolerance:
+            # else:
+            #     # 2nd Move
 
-                # End Effector Position [world]
-                eefP = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
+            #     # Points from previous run
+            #     A = self.A
+            #     B = self.B
 
-                # We can get the joint values from the group and adjust some of the values:
-                joint_goal = self.move_group.get_current_joint_values()
-                joint_goal[1] += (CURCAM_VECn[0] * 0.01)
+            #     C = CURCAM_PT
 
-                self.move_group.go(joint_goal, wait=True)
-                self.move_group.stop()
+            #     %rospy.logwarn([((np.linalg.norm(C - A))/(np.linalg.norm((B - A)*self.scale))), 1/((C - A)/((B - A)*self.scale))])
 
-    
+                
+
+                # Wrap Up
+                self.A = None
+                self.B = None
+
 
     def forwardStep(self, d):
         
@@ -166,11 +189,7 @@ class approachPlanner(object):
 
             plan = self.move_group.set_pose_target(pose_goal)
 
-            rospy.logwarn("Premotion...")
-
             self.move_group.go(wait=True)
-
-            rospy.logwarn("Postmotion...")
 
             self.move_group.stop()
 
