@@ -58,11 +58,11 @@ class approachPlanner(object):
         self.aCLast = None
         self.aDLast = None
 
-        self.pixelTolerance  =   10
+        self.pixelTolerance  =   75
         self.distTolerance   =   0.1
         self.deadReck = 0.2
 
-        self.scale  = np.array((0.001,0.001))
+        self.scale  = np.array((0.01,0.01))
 
         self.A      = None
         self.B      = None
@@ -121,7 +121,7 @@ class approachPlanner(object):
             else:
                 # Terminate Process
                 rospy.logwarn("Done!")
-                # self.wrapUp()
+                self.wrapUp()
                 pass
 
     def wrapUp(self):
@@ -153,9 +153,12 @@ class approachPlanner(object):
                 # v / (np.linalg.norm(v) + 1e-16)
 
                 v = (self.B - self.A)
+                v = v / np.linalg.norm(v)
+
+                rospy.logwarn(v)
 
                 joint_goal[0] += (v[0] * self.scale[0])
-                joint_goal[1] -= (v[1] * self.scale[1])
+                joint_goal[1] += (v[1] * self.scale[1])
 
                 self.move_group.go(joint_goal, wait=True)
                 self.move_group.stop()
