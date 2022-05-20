@@ -9,8 +9,9 @@ You can install this package and it's dependencies as follows:
 ```sh
 # in catkin_ws
 catkin init
-source devel/setup.bash
 catkin build
+source devel/setup.bash
+
 
 wstool init src
 wstool merge -t src applevision.rosinstall
@@ -25,6 +26,8 @@ sudo apt install ros-melodic-moveit
 pip3 install numpy opencv-python-headless
 
 catkin build
+
+source devel/setup.bash
 ```
 
 ## Launching

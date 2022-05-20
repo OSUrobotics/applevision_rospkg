@@ -48,9 +48,9 @@ class approachPlanner(object):
                                                        moveit_msgs.msg.DisplayTrajectory,
                                                        queue_size=20)
 
-        self.success_or_failure_publilsher = rospy.Publisher('/success_or_failure', std_msgs.msg.String, queue_size=20)
-
         self.tf_listener_ = tf.TransformListener()
+
+        # CV Details
 
         self.CAMERA_RES = np.array((640, 360))
         self.CENTER_PT  = self.CAMERA_RES // 2
@@ -58,9 +58,15 @@ class approachPlanner(object):
         self.aCLast = None
         self.aDLast = None
 
-        self.pixelTolerance  =   75
-        self.distTolerance   =   0.1
-        self.deadReck = 0.2
+        self.tolerances = {
+            'pixel' : 75,   # center vec
+            'dist'  : 0.2,  # distance sensor
+            'dead'  : 0.4,  # dead recking zone
+            'miss'  : 20    # count dropped 
+        }
+
+        self.distMissCount  = 0
+        self.distDisabled   = False
 
         self.scale  = np.array((0.01,0.01))
 
@@ -68,23 +74,32 @@ class approachPlanner(object):
         self.B      = None
 
     def toCenterCoord(self, q):
-        return np.array((q.x + q.w // 2, q.y + q.h // 2))
+        return np.array((q.x + (q.w // 2), q.y + (q.h // 2)))
 
     def aCCallback(self, res):
         if self.aCLast == None:
             self.aCLast = res
             self.tryPlan()
-        pass
+        else:
+            if self.aDLast == None and self.distDisabled is False: self.distMissCount += 1
+
+            if self.distMissCount > self.tolerances['miss']: self.distDisabled = True
 
     def aDCallback(self, res):
         if self.aDLast == None:
             self.aDLast = res
+
+            if self.distDisabled == True:
+                self.distDisabled == False
+                self.distMissCount = 0
+
             self.tryPlan()
         pass
 
     def tryPlan(self):
         # Pre-Exit on Missing Sub
-        if self.aCLast == None or self.aDLast == None:
+        if self.aCLast == None and (self.aDLast == None or self.distDisabled == True):
+            rospy.logwarn("stuck doing nothing")
             return
 
         # Pull values for inspection
@@ -101,21 +116,21 @@ class approachPlanner(object):
 
             cP = self.toCenterCoord(aC)
 
-            if aD.range > self.distTolerance and aD.range > self.deadReck:
+            if aD.range > self.tolerances['dist'] and aD.range > self.tolerances['dead']:
                 # Advance closer to apple, this always happens after a potential trajectory correction step
                 # Check if Camera is Centered
-                if np.linalg.norm(self.CENTER_PT - cP) > self.pixelTolerance:
+                if np.linalg.norm(self.CENTER_PT - cP) > self.tolerances['pixel']:
                     rospy.logwarn("Centering")
                     self.centerCamera(aC, aD)
                 else:
-                    msg = "Approaching, t-" + str(aD.range - self.distTolerance)
+                    msg = "Approaching, t-" + str(aD.range - self.tolerances['dist'])
                     rospy.logwarn(msg)
                     rospy.logwarn(aD.range)
                     self.forwardStep(aD)
                     pass
-            elif aD.range > self.distTolerance and aD.range < self.deadReck:
+            elif aD.range > self.tolerances['dist'] and aD.range < self.tolerances['dead']:
                 # Stop Checking for camera, start the full aproach
-                msg = "Approaching (dead), t-" + str(aD.range - self.distTolerance)
+                msg = "Approaching (dead), t-" + str(aD.range - self.tolerances['dist'])
                 rospy.logwarn(msg)
                 self.forwardStep(aD)
             else:
@@ -158,7 +173,7 @@ class approachPlanner(object):
                 rospy.logwarn(v)
 
                 joint_goal[0] += (v[0] * self.scale[0])
-                joint_goal[1] += (v[1] * self.scale[1])
+                joint_goal[1] -= (v[1] * self.scale[1])
 
                 self.move_group.go(joint_goal, wait=True)
                 self.move_group.stop()
@@ -183,8 +198,8 @@ class approachPlanner(object):
 
     def forwardStep(self, d):
         
-        rospy.logwarn((d.range - self.distTolerance))
-        if d.range > self.distTolerance:
+        rospy.logwarn((d.range - self.tolerances['dist']))
+        if d.range > self.tolerances['dist']:
 
             pose_goal = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
 
