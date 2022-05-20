@@ -79,7 +79,7 @@ class AppleVisionHandler:
     def run_applevision(self, im: Image):
         if rospy.Time.now() - im.header.stamp > rospy.Duration.from_sec(0.1):
             # this frame is too old
-            rospy.logdebug('CV: Ignoring old frame')
+            rospy.logwarn_throttle_identical(3, 'CV: Ignoring old frame')
             return None
 
         # convert to cv2 image
@@ -105,6 +105,7 @@ class AppleVisionHandler:
         # print(confidences, boxes, "\n")
         if len(confidences) > 0:
             # Order them for fast indexing later
+            boxes = [tuple(b) for b in boxes]
             confidences, boxes = zip(
                 *sorted(zip(confidences, boxes), reverse=True))
 
