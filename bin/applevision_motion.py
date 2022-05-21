@@ -1,41 +1,84 @@
 #!/usr/bin/env python
-import math
+
 import sys
-import copy
-from tokenize import group
+
 import rospy
-import time
 import moveit_commander
 import moveit_msgs.msg
-import geometry_msgs.msg
-from random import random
-import os
-import subprocess, shlex, psutil
-
-from math import pi
-
-import std_msgs.msg
-from std_msgs.msg import String
-from moveit_commander.conversions import pose_to_list
-from tf.transformations import quaternion_from_euler
-
+import tf
 from std_msgs.msg import String
 from sensor_msgs.msg import Range
-import csv
-
 import numpy as np
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 
 from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
 
-import tf
+class SynchronizerMinTick(ApproximateTimeSynchronizer):
+    """
+    Calls a callback if one of two conditions occur:
+      1. A group of messages have timestamps within self.slop
+      2. An above group has not occured within self.min_tick
+    In other words, this class seeks to synchronize incoming messages with the constraint that
+    we would also like the callback to be invoked at a minimum frequency. This behavior allows
+    for graceful failure when a sensor stops publishing unexpectedly.
+
+    If the min_tick timer elapses and not all messages are ready, the callback will be invoked
+    with the earliest message from the highest priority subscriber (in order passed to the constructor),
+    all topics that do not have a message recent enough will be filled with None.
+    """
+
+    def __init__(self, fs, queue_size, slop, min_tick):
+        super(SynchronizerMinTick, self).__init__(fs, queue_size, slop)
+        self.min_tick = rospy.Duration.from_sec(min_tick)
+        self.last_tick = rospy.Time()
+        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
+    
+    def signalMessage(self, *msg):
+        if self.tick_timer:
+            self.tick_timer.shutdown()
+
+        self.last_tick = rospy.Time()
+        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
+        return super(SynchronizerMinTick, self).signalMessage(*msg)
+
+    def _timerCallback(self, _):
+        # signalMessage with whatever the latest data is
+        with self.lock:
+            found_msg = None
+            for q in self.queues:
+                if not q:
+                    continue
+                highest_stamp = max(q)
+                if rospy.Time.now() - highest_stamp <= self.min_tick:
+                    found_msg = q[highest_stamp]
+            
+            if not found_msg:
+                # nothing has pinged within the tick rate
+                rospy.logwarn('SynchronizerMinTick: no packets within min tick rate')
+                ret = [None for _ in range(len(self.queues))]
+            else:
+                target_stamp = found_msg.header.stamp
+                # collect all things that have pinged within the slop
+                ret = []
+                for q in self.queues:
+                    if not q:
+                        ret.append(None)
+                        continue
+                    best_stamp_diff, best_stamp = min((abs(target_stamp - s), s) for s in q)
+                    if best_stamp_diff <= self.slop:
+                        ret.append(q[best_stamp])
+                    else:
+                        ret.append(None)
+            
+            # empty queue and return
+            self.signalMessage(*ret)
+            for q in self.queues:
+                q.clear()
 
 
-class approachPlanner(object):
-    def __init__(self):
-        super(approachPlanner, self).__init__()
-
+class ApproachPlanner():
+    def __init__(self, acSub, adSub):
         # Moveit Setup
-        
         moveit_commander.roscpp_initialize(sys.argv)
 
         self.robot = moveit_commander.RobotCommander()
@@ -50,6 +93,7 @@ class approachPlanner(object):
 
         self.tf_listener_ = tf.TransformListener()
 
+
         # CV Details
 
         self.CAMERA_RES = np.array((640, 360))
@@ -62,7 +106,9 @@ class approachPlanner(object):
             'pixel' : 75,   # center vec
             'dist'  : 0.2,  # distance sensor
             'dead'  : 0.4,  # dead recking zone
-            'miss'  : 20    # count dropped 
+            'miss'  : 20,   # count dropped
+            'slop'  : 0.017,# sec timestamp off
+            'tick'  : 1     # sec no data without action
         }
 
         self.distMissCount  = 0
@@ -73,30 +119,36 @@ class approachPlanner(object):
         self.A      = None
         self.B      = None
 
+        # synchronizer
+
+        # registers tryPlan as the message callback.
+        self.sync = SynchronizerMinTick([acSub, adSub], 10, self.tolerances['slop'], self.tolerances['min_tick'])
+        self.sync.registerCallback(self.tryPlan)
+
     def toCenterCoord(self, q):
         return np.array((q.x + (q.w // 2), q.y + (q.h // 2)))
 
-    def aCCallback(self, res):
-        if self.aCLast == None:
-            self.aCLast = res
-            self.tryPlan()
-        else:
-            if self.aDLast == None and self.distDisabled is False: self.distMissCount += 1
+    # def aCCallback(self, res):
+    #     if self.aCLast == None:
+    #         self.aCLast = res
+    #         self.tryPlan()
+    #     else:
+    #         if self.aDLast == None and self.distDisabled is False: self.distMissCount += 1
+    #         if self.distMissCount > self.tolerances['miss']: self.distDisabled = True
 
-            if self.distMissCount > self.tolerances['miss']: self.distDisabled = True
+    # def aDCallback(self, res):
+    #     if self.aDLast == None:
+    #         self.aDLast = res
+    #         if self.distDisabled == True:
+    #             self.distDisabled == False
+    #             self.distMissCount = 0
+    #         self.tryPlan()
+    #     pass
 
-    def aDCallback(self, res):
-        if self.aDLast == None:
-            self.aDLast = res
+    def tryPlan(self, cam_msg, dist_msg):
+        # TODO: do something with cam_msg and dist_msg. Note that cam_msg and dist_msg can be None.
+        # TODO: refactor now that messages aren't in self.aCLast and self.aDLast
 
-            if self.distDisabled == True:
-                self.distDisabled == False
-                self.distMissCount = 0
-
-            self.tryPlan()
-        pass
-
-    def tryPlan(self):
         # Pre-Exit on Missing Sub
         if self.aCLast == None and (self.aDLast == None or self.distDisabled == True):
             rospy.logwarn("stuck doing nothing")
@@ -249,10 +301,9 @@ def main():
         rospy.init_node('applevision_motion')
         rospy.wait_for_service('Tf2Transform')
 
-        aP = approachPlanner()
-
-        aCpub = rospy.Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped, aP.aCCallback, queue_size=1)
-        aDPub = rospy.Subscriber('applevision/apple_dist', Range, aP.aDCallback, queue_size=10)
+        aCsub = Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped)
+        aDsub = Subscriber('applevision/apple_dist', Range)
+        aP = ApproachPlanner(aCsub, aDsub)
 
         rospy.spin()
 
