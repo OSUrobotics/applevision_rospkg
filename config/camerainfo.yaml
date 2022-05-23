@@ -1,6 +1,7 @@
 image_height: 360
 image_width: 640
 camera_name: palm_camera
+frame_id: palm
 distortion_model: 'plumb_bob'
 camera_matrix:
   rows: 3

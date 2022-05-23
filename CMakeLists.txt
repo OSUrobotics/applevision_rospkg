@@ -173,6 +173,8 @@ catkin_install_python(PROGRAMS
    bin/tf2_proxy_run.py
    bin/applevision_visualizer.py
    bin/applevision_vision.py
+   bin/applevision_motion.py
+   bin/camerainfo_pub.py
    DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
