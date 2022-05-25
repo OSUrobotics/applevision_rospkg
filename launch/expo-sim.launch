@@ -1,0 +1,4 @@
+<launch>
+    <include file="$(find applevision_moveit_config)/launch/demo.launch" />
+    <include file="$(find applevision_rospkg)/launch/fake_sensor.launch" />
+</launch>
