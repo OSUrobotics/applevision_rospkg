@@ -130,7 +130,7 @@ graph LR
 
     moveit[[MoveIt 1]]
     control(Control System<br>bin/applevision_motion.py)
-    filter(Kalman Filter<br>bin/applevision_main.py)
+    filter(Kalman Filter<br>bin/applevision_filter.py)
     fake(Fake Distance Sensor<br>bin/applevision_fake_sensor_inputs.py)
 
     subgraph CV Pipeline

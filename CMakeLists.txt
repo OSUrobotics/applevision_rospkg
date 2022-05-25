@@ -169,7 +169,7 @@ include_directories(
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
    bin/applevision_fake_sensor_inputs.py
-   bin/applevision_main.py
+   bin/applevision_filter.py
    bin/tf2_proxy_run.py
    bin/applevision_visualizer.py
    bin/applevision_vision.py

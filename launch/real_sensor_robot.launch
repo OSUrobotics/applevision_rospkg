@@ -15,5 +15,5 @@
     </node>
     <node name="applevision_vision" pkg="applevision_rospkg" type="applevision_vision.py" respawn="true" />
     <node name="applevision_visualizer" pkg="applevision_rospkg" type="applevision_visualizer.py" respawn="true" />
-    <!-- <node name="applevision_main" pkg="applevision_rospkg" type="applevision_main.py" respawn="true" /> -->
+    <!-- <node name="applevision_filter" pkg="applevision_rospkg" type="applevision_filter.py" respawn="true" /> -->
 </launch>

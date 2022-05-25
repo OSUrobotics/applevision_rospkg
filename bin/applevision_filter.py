@@ -123,7 +123,7 @@ class MainHandler:
 
 
 def main():
-    rospy.init_node('applevision_main')
+    rospy.init_node('applevision_filter')
     rospy.wait_for_service('Tf2Transform')
 
     # TODO: Tune these
