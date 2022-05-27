@@ -28,9 +28,10 @@ class ExpoDemo():
     BOUNDS_X = (-0.8, -0.2)
     BOUNDS_Y = (-1.2, 0)
     BOUNDS_Z = (1, 2)
-    BOUND_ORIENTATION = 20
+    BOUND_ORIENTATION = 10
     ORIENTATION_TARGET = (-0.707, 0, 0, 0.707)
     EXPO_DEMO_PROGRAM = os.path.join(os.path.dirname(__file__), 'applevision_motion.py')
+    EXPO_BAG = '/home/avl/new_ws/bags/approach-ok.bag'
     CHECK_DURATION = rospy.Duration.from_sec(0.1)
     GROUP_NAME = 'manipulator'
     HOME_POSITION = 'up'
@@ -78,7 +79,8 @@ class ExpoDemo():
         rospy.on_shutdown(self.kill_robot)
 
     def make_control_system_process(self):
-        proc = subprocess.Popen([self.EXPO_DEMO_PROGRAM, 'EXPO: DEMO {}:'.format(self.demo_seq)])
+        # proc = subprocess.Popen([self.EXPO_DEMO_PROGRAM, 'EXPO: DEMO {}:'.format(self.demo_seq)])
+        proc = subprocess.Popen(['/opt/ros/melodic/bin/rosbag', 'play', ExpoDemo.EXPO_BAG])
         self.demo_seq += 1
         return proc
 

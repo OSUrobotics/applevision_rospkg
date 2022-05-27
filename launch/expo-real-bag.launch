@@ -4,6 +4,5 @@
     <include file="$(find ur_robot_driver)/launch/ur5e_bringup.launch" pass_all_args="true"/>
     <include file="$(find applevision_moveit_config)/launch/ur5e_moveit_planning_execution.launch" pass_all_args="true"/>
     <include file="$(find applevision_moveit_config)/launch/moveit_rviz.launch" pass_all_args="true"/>
-    <include file="$(find applevision_rospkg)/launch/real_sensor_robot.launch" />
-    <!-- <include file="$(find applevision_rospkg)/launch/fake_sensor.launch" />  -->
+    <include file="$(find applevision_rospkg)/launch/config.launch" />
 </launch>

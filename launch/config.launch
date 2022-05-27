@@ -2,7 +2,7 @@
     <node pkg="tf2_ros" type="static_transform_publisher" name="applevision_camera_tf"
         args="0 0 0 0 0 0 palm palm_camera" />
     <node pkg="tf2_ros" type="static_transform_publisher" name="applevision_dist_tf"
-        args="0 0 0 0 -1.5708 0 palm palm_dist" />
+        args="0 0.017 0 0 -1.5708 0 palm palm_dist" />
     <node pkg="tf2_ros" type="static_transform_publisher" name="applevision_target_tf"
         args="0 0 0 0 0 1.5708 apple applevision_target" />
     <node pkg="tf2_ros" type="static_transform_publisher" name="applevision_start_tf"

@@ -96,7 +96,7 @@ def main():
                         starting_std=.4,
                         z_std=.005,
                         backdrop_dist=.5,
-                        apple_r=.040,
+                        apple_r=.035,
                         dist_fov_rad=np.deg2rad(20),
                         camera_info=cam_info.get_last_camera_info())
     kal_filter = KalmanFilter(

@@ -43,7 +43,7 @@ class MotionPlanner():
 
     def is_in_motion(self) -> bool:
         status = self.move_group_action.get_state()
-        return status in [GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING]
+        return status in [GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING, GoalStatus.PENDING]
 
     def start_move_to_pose(self, coords, tolerance):
         self.move_group_action.cancel_all_goals()
@@ -106,9 +106,9 @@ class AppleApproach():
     CAMERA_DEAD_THRESH_Z = 0.3
     DIST_VAR_GOOD_THRESH = 0.02**2
     STEP_DIST_Z = 0.05
-    STOP_DIST_Z = 0.14
+    STOP_DIST_Z = 0.10
     ESTOP_DIST_Z = 0.06
-    PALM_DIST_OFF_Y = 0.01 # TODO: fix from URDF
+    PALM_DIST_OFF_Y = -0.017 # TODO: fix from URDF
 
     class State(Enum):
         IDLE = auto()

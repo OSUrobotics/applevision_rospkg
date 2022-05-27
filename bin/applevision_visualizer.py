@@ -5,7 +5,7 @@ import math
 import numpy as np
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import TransformStamped, Point
-from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
+from applevision_rospkg.msg import PointWithCovarianceStamped
 from applevision_rospkg.srv import Tf2Transform
 from helpers import RobustServiceProxy, ServiceProxyFailed, HeaderCalc
 
@@ -26,7 +26,7 @@ class CamVizHandler:
         self._header = HeaderCalc('palm')
         self._gen = np.random.default_rng()
 
-    def make_cam_fov_marker(self, z_extrap: float, cam_msg: RegionOfInterestWithCovarianceStamped):
+    def make_cam_fov_marker(self, z_extrap: float, cam_msg):
         # draw the complete camera FOV
         # https://www.edmundoptics.com/knowledge-center/application-notes/imaging/understanding-focal-length-and-field-of-view/
         CAM_FOV_ACROSS = 2*math.atan(self.CAMERA_SENSOR[0]/(2*self.CAMERA_FOCAL))
@@ -86,7 +86,7 @@ class CamVizHandler:
 
         return [box_mark, cam_mark]
 
-    def callback(self, cam: RegionOfInterestWithCovarianceStamped):
+    def callback(self, cam):
         # draw the cameras FOV and bounding box
         dist_to_apple = self.tf_get('applevision_target', 'palm_camera', rospy.Time(), rospy.Duration())
         print(dist_to_apple)
