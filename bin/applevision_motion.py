@@ -1,316 +1,245 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
+from typing import Optional
+from enum import Enum, auto
+from threading import Lock
+import traceback
 import sys
 
 import rospy
-import moveit_commander
-import moveit_msgs.msg
-import tf
-from std_msgs.msg import String
+import actionlib
+from actionlib import GoalStatus
+from message_filters import Subscriber
+from moveit_msgs.msg import MoveGroupAction, MoveGroupGoal, Constraints, PositionConstraint, BoundingVolume, OrientationConstraint
+from geometry_msgs.msg import PoseStamped
+from shape_msgs.msg import SolidPrimitive
 from sensor_msgs.msg import Range
-import numpy as np
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 
-from applevision_rospkg.msg import PointWithCovarianceStamped, RegionOfInterestWithCovarianceStamped
-
-class SynchronizerMinTick(ApproximateTimeSynchronizer):
-    """
-    Calls a callback if one of two conditions occur:
-      1. A group of messages have timestamps within self.slop
-      2. An above group has not occured within self.min_tick
-    In other words, this class seeks to synchronize incoming messages with the constraint that
-    we would also like the callback to be invoked at a minimum frequency. This behavior allows
-    for graceful failure when a sensor stops publishing unexpectedly.
-
-    If the min_tick timer elapses and not all messages are ready, the callback will be invoked
-    with the earliest message from the highest priority subscriber (in order passed to the constructor),
-    all topics that do not have a message recent enough will be filled with None.
-    """
-
-    def __init__(self, fs, queue_size, slop, min_tick):
-        super(SynchronizerMinTick, self).__init__(fs, queue_size, slop)
-        self.min_tick = rospy.Duration.from_sec(min_tick)
-        self.last_tick = rospy.Time()
-        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
-    
-    def signalMessage(self, *msg):
-        if self.tick_timer:
-            self.tick_timer.shutdown()
-
-        self.last_tick = rospy.Time()
-        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
-        return super(SynchronizerMinTick, self).signalMessage(*msg)
-
-    def _timerCallback(self, _):
-        # signalMessage with whatever the latest data is
-        with self.lock:
-            found_msg = None
-            for q in self.queues:
-                if not q:
-                    continue
-                highest_stamp = max(q)
-                if rospy.Time.now() - highest_stamp <= self.min_tick:
-                    found_msg = q[highest_stamp]
-            
-            if not found_msg:
-                # nothing has pinged within the tick rate
-                rospy.logwarn('SynchronizerMinTick: no packets within min tick rate')
-                ret = [None for _ in range(len(self.queues))]
-            else:
-                target_stamp = found_msg.header.stamp
-                # collect all things that have pinged within the slop
-                ret = []
-                for q in self.queues:
-                    if not q:
-                        ret.append(None)
-                        continue
-                    best_stamp_diff, best_stamp = min((abs(target_stamp - s), s) for s in q)
-                    if best_stamp_diff <= self.slop:
-                        ret.append(q[best_stamp])
-                    else:
-                        ret.append(None)
-            
-            # empty queue and return
-            self.signalMessage(*ret)
-            for q in self.queues:
-                q.clear()
+from applevision_rospkg.srv import Tf2TransformPoseStamped
+from applevision_rospkg.msg import RegionOfInterestWithConfidenceStamped, PointWithCovarianceStamped
+from helpers import RobustServiceProxy, ServiceProxyFailed, SynchronizerMinTick
 
 
-class ApproachPlanner():
-    def __init__(self, acSub, adSub):
-        # Moveit Setup
-        moveit_commander.roscpp_initialize(sys.argv)
-
-        self.robot = moveit_commander.RobotCommander()
-        self.scene = moveit_commander.PlanningSceneInterface()
-
-        group_name = "manipulator"
-
-        self.move_group = moveit_commander.MoveGroupCommander(group_name)
-        self.display_trajectory_publisher = rospy.Publisher('/move_group/display_planned_path',
-                                                       moveit_msgs.msg.DisplayTrajectory,
-                                                       queue_size=20)
-
-        self.tf_listener_ = tf.TransformListener()
+GROUP_NAME = 'manipulator'
+EE_FRAME = 'palm'
+WORLD_FRAME = 'world'
+PLANNING_TIME = 1.0
+SYNC_SLOP = 0.2
+SYNC_TICK = 0.5
+MOVE_TOLERANCE = 0.01
+LOG_PREFIX = sys.argv[1]
 
 
-        # CV Details
+class MotionPlanner():
+    def __init__(self):
+        # Moveit setup
+        self.move_group_action = actionlib.SimpleActionClient(
+            'move_group', MoveGroupAction)
+        self.tf_trans = RobustServiceProxy(
+            'Tf2TransformPoseStamped', Tf2TransformPoseStamped, persistent=True, retry_count=5, backoff=0.05)
 
-        self.CAMERA_RES = np.array((640, 360))
-        self.CENTER_PT  = self.CAMERA_RES // 2
+    def stop(self):
+        self.move_group_action.cancel_all_goals()
 
-        self.aCLast = None
-        self.aDLast = None
+    def is_in_motion(self) -> bool:
+        status = self.move_group_action.get_state()
+        return status in [GoalStatus.ACTIVE, GoalStatus.PREEMPTING, GoalStatus.RECALLING]
 
-        self.tolerances = {
-            'pixel' : 75,   # center vec
-            'dist'  : 0.2,  # distance sensor
-            'dead'  : 0.4,  # dead recking zone
-            'miss'  : 20,   # count dropped
-            'slop'  : 0.017,# sec timestamp off
-            'tick'  : 1     # sec no data without action
+    def start_move_to_pose(self, coords, tolerance):
+        self.move_group_action.cancel_all_goals()
+
+        # Translated from https://github.com/mikeferguson/moveit_python/blob/ros1/src/moveit_python/move_group_interface.py
+        pose = PoseStamped()
+        pose.pose.position.x = coords[0]
+        pose.pose.position.y = coords[1]
+        pose.pose.position.z = coords[2]
+        pose.pose.orientation.w = 1
+        pose.header.frame_id = EE_FRAME
+
+        try:
+            transformed_response = self.tf_trans(pose, WORLD_FRAME, rospy.Duration())
+        except ServiceProxyFailed as e:
+            raise RuntimeError('TF2 service proxy failed') from e
+        transformed_pose = transformed_response.transformed
+
+        g = MoveGroupGoal()
+        g.request.start_state.is_diff = True
+
+        c1 = Constraints()
+        p1 = PositionConstraint()
+        p1.header.frame_id = WORLD_FRAME
+        p1.link_name = EE_FRAME
+        s = SolidPrimitive(dimensions=[tolerance**2], type=SolidPrimitive.SPHERE)
+        b = BoundingVolume()
+        b.primitives.append(s)
+        b.primitive_poses.append(transformed_pose.pose)
+        p1.constraint_region = b
+        p1.weight = 1
+        c1.position_constraints.append(p1)
+
+        # locked forward for now
+        o1 = OrientationConstraint()
+        o1.header.frame_id = WORLD_FRAME
+        o1.orientation.x = -0.707
+        o1.orientation.w = 0.707
+        o1.link_name = EE_FRAME
+        o1.absolute_x_axis_tolerance = tolerance
+        o1.absolute_y_axis_tolerance = tolerance
+        o1.absolute_z_axis_tolerance = tolerance
+        o1.weight = 1
+        c1.orientation_constraints.append(o1)
+
+        g.request.goal_constraints.append(c1)
+        g.request.group_name = GROUP_NAME
+        g.request.num_planning_attempts = 1
+        g.request.allowed_planning_time = PLANNING_TIME
+        g.planning_options.planning_scene_diff.is_diff = True
+        g.planning_options.planning_scene_diff.robot_state.is_diff = True
+        g.planning_options.look_around = False
+        g.planning_options.replan = False
+
+        self.move_group_action.send_goal(g)
+
+
+class AppleApproach():
+    CENTER_THRESH_XY = 0.05
+    CAMERA_DEAD_THRESH_Z = 0.3
+    DIST_VAR_GOOD_THRESH = 0.02**2
+    STEP_DIST_Z = 0.05
+    STOP_DIST_Z = 0.1
+
+    class State(Enum):
+        IDLE_HOME = auto()
+        CENTER = auto()
+        CENTER_IN_MOTION = auto()
+        APPROACH = auto()
+        APPROACH_IN_MOTION = auto()
+        DONE = auto()
+
+    def __init__(self, planner: MotionPlanner):
+        self.planner = planner
+        self.state = self.State.IDLE_HOME
+        self.next_state: Optional[AppleApproach.State] = None
+        self.running_lock = Lock()
+
+        self._state_cb_table = {
+            AppleApproach.State.IDLE_HOME: self.idle_home_callback,
+            AppleApproach.State.CENTER: self.center_callback,
+            AppleApproach.State.CENTER_IN_MOTION: self.center_in_motion_callback,
+            AppleApproach.State.APPROACH: self.approach_callback,
+            AppleApproach.State.APPROACH_IN_MOTION: self.approach_in_motion_callback
         }
 
-        self.distMissCount  = 0
-        self.distDisabled   = False
+    def die(self, msg):
+        self.planner.stop()
+        rospy.logfatal(f'{LOG_PREFIX}{msg}')
+        rospy.signal_shutdown('Death')
 
-        self.scale  = np.array((0.01,0.01))
-
-        self.A      = None
-        self.B      = None
-
-        # synchronizer
-
-        # registers tryPlan as the message callback.
-        self.sync = SynchronizerMinTick([acSub, adSub], 10, self.tolerances['slop'], self.tolerances['min_tick'])
-        self.sync.registerCallback(self.tryPlan)
-
-    def toCenterCoord(self, q):
-        return np.array((q.x + (q.w // 2), q.y + (q.h // 2)))
-
-    # def aCCallback(self, res):
-    #     if self.aCLast == None:
-    #         self.aCLast = res
-    #         self.tryPlan()
-    #     else:
-    #         if self.aDLast == None and self.distDisabled is False: self.distMissCount += 1
-    #         if self.distMissCount > self.tolerances['miss']: self.distDisabled = True
-
-    # def aDCallback(self, res):
-    #     if self.aDLast == None:
-    #         self.aDLast = res
-    #         if self.distDisabled == True:
-    #             self.distDisabled == False
-    #             self.distMissCount = 0
-    #         self.tryPlan()
-    #     pass
-
-    def tryPlan(self, cam_msg, dist_msg):
-        # TODO: do something with cam_msg and dist_msg. Note that cam_msg and dist_msg can be None.
-        # TODO: refactor now that messages aren't in self.aCLast and self.aDLast
-
-        # Pre-Exit on Missing Sub
-        if self.aCLast == None and (self.aDLast == None or self.distDisabled == True):
-            rospy.logwarn("stuck doing nothing")
+    def tick_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
+        if self.running_lock.locked():
             return
-
-        # Pull values for inspection
-        aC = self.aCLast
-        aD = self.aDLast
-
-        # Sanitize workspace
-        self.aCLast = None
-        self.aDLast = None
-
-        # Check for target in FOV
-        if (aC.w or aC.h):
-            # target found
-
-            cP = self.toCenterCoord(aC)
-
-            if aD.range > self.tolerances['dist'] and aD.range > self.tolerances['dead']:
-                # Advance closer to apple, this always happens after a potential trajectory correction step
-                # Check if Camera is Centered
-                if np.linalg.norm(self.CENTER_PT - cP) > self.tolerances['pixel']:
-                    rospy.logwarn("Centering")
-                    self.centerCamera(aC, aD)
-                else:
-                    msg = "Approaching, t-" + str(aD.range - self.tolerances['dist'])
-                    rospy.logwarn(msg)
-                    rospy.logwarn(aD.range)
-                    self.forwardStep(aD)
-                    pass
-            elif aD.range > self.tolerances['dist'] and aD.range < self.tolerances['dead']:
-                # Stop Checking for camera, start the full aproach
-                msg = "Approaching (dead), t-" + str(aD.range - self.tolerances['dist'])
-                rospy.logwarn(msg)
-                self.forwardStep(aD)
-            else:
-                # Terminate Process
-                rospy.logwarn("Done!")
-                self.wrapUp()
-                pass
-
-    def wrapUp(self):
-        rospy.logwarn("Terminating Motion Sequence")
-        rospy.signal_shutdown("End Position Reached") 
-
-    # Assumed Camera is in view when executed
-    def centerCamera(self, c, d):
-        # Check for target in FOV
-        if (c.w or c.h):
-            # target found
-
-            # Transform pixel coordinates and generate pixel space vector to center
-
-            CURCAM_PT   = np.array((c.x + c.w // 2, c.y + c.h // 2))
-
-            if self.A is None or self.B is None:
-                # 1st Move
-
-                # Point (B) -> (A.t)
-                self.A = CURCAM_PT
-                self.B = self.CENTER_PT
-
-                # X Component, Hip
-                # End Effector Position [world]
-                joint_goal = self.move_group.get_current_joint_values()
-
-                # Normalization Hack: https://stackoverflow.com/questions/21030391/how-to-normalize-a-numpy-array-to-a-unit-vector
-                # v / (np.linalg.norm(v) + 1e-16)
-
-                v = (self.B - self.A)
-                v = v / np.linalg.norm(v)
-
-                rospy.logwarn(v)
-
-                joint_goal[0] += (v[0] * self.scale[0])
-                joint_goal[1] -= (v[1] * self.scale[1])
-
-                self.move_group.go(joint_goal, wait=True)
-                self.move_group.stop()
-
-            # else:
-            #     # 2nd Move
-
-            #     # Points from previous run
-            #     A = self.A
-            #     B = self.B
-
-            #     C = CURCAM_PT
-
-            #     %rospy.logwarn([((np.linalg.norm(C - A))/(np.linalg.norm((B - A)*self.scale))), 1/((C - A)/((B - A)*self.scale))])
-
-                
-
-                # Wrap Up
-                self.A = None
-                self.B = None
+        try:
+            with self.running_lock:
+                if self.state == AppleApproach.State.DONE:
+                    rospy.loginfo(f'{LOG_PREFIX} Approach complete! Terminating...')
+                    rospy.sleep(5)
+                    rospy.signal_shutdown('All done!')
+                ret = self._state_cb_table[self.state](kal, cam, dist)
+                if ret:
+                    next_state, msg = ret
+                    rospy.loginfo(f'{LOG_PREFIX} {self.state} -> {next_state}: {msg}')
+                    self.state = next_state
+        except Exception as e:
+            self.die(f'Caught exception {e}:\n{traceback.format_exc()}')
 
 
-    def forwardStep(self, d):
-        
-        rospy.logwarn((d.range - self.tolerances['dist']))
-        if d.range > self.tolerances['dist']:
+    def idle_home_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
+        # if bounding box present, switch to centering
+        # TODO: check variance?
+        if cam and cam.w and cam.h and kal:
+            return (AppleApproach.State.CENTER, 'detected apple, centering')
+        # else do nothing
+        return None
 
-            pose_goal = self.move_group.get_current_pose(self.move_group.get_end_effector_link())
+    def center_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
+        if not kal:
+            return (AppleApproach.State.IDLE_HOME, 'centered without kalman filter')
 
-            pose_goal.pose.position.y += 0.1
+        # start centering
+        self.planner.start_move_to_pose((kal.point[0], kal.point[1], 0), MOVE_TOLERANCE)
+        return (AppleApproach.State.CENTER_IN_MOTION, f'started centering: {kal.point[0], kal.point[1]}')
 
-            plan = self.move_group.set_pose_target(pose_goal)
+    def center_in_motion_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
+        if self.planner.is_in_motion() or not kal:
+            return None
 
-            self.move_group.go(wait=True)
+        # Check if we're centered or close, if so begin approach
+        if (abs(kal.point[0]) < AppleApproach.CENTER_THRESH_XY and abs(kal.point[1]) < AppleApproach.CENTER_THRESH_XY) \
+                or kal.point[2] < AppleApproach.CAMERA_DEAD_THRESH_Z:
+            return (AppleApproach.State.APPROACH, f'apple is centered: {kal.point[0], kal.point[1]}')
 
-            self.move_group.stop()
+        # else center again
+        return (AppleApproach.State.CENTER, f'centering again: {kal.point[0], kal.point[1]}')
 
+    def approach_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
+        # if we don't have the kalman filter wait another tick
+        if not kal:
+            return None
 
-        # Convert to frame palm
+        # if the filter reads under the threshold, we're done!
+        if kal.point[2] <= AppleApproach.STOP_DIST_Z:
+            return (AppleApproach.State.DONE, f'apple approach complete at distance {kal.point[2]}')
 
-        # t = self.tf_listener_.getLatestCommonTime("/world", "/palm")
-        # p1 = geometry_msgs.msg.PoseStamped()
-        # p1.header.frame_id = "/palm"
-        # p1.pose = eefP.pose
+        # if the distance sensor is not confident, approach a little bit
+        if kal.covariance[8] > AppleApproach.DIST_VAR_GOOD_THRESH:
+            self.planner.start_move_to_pose((0, 0, min(kal.point[2] - AppleApproach.STOP_DIST_Z, AppleApproach.STEP_DIST_Z)), MOVE_TOLERANCE)
+            return (AppleApproach.State.APPROACH_IN_MOTION, f'small approach: {kal.point[2]}')
 
-        # End Effector Position [Palm]
+        # if an error occurred, panic so we can reset
+        status = self.planner.move_group_action.get_state()
+        if status != GoalStatus.SUCCEEDED:
+            self.die(f'Failed to move in approach with status {status} error status {self.planner.move_group_action.get_goal_status_text()}')
 
-        # eefP_palm = self.tf_listener_.transformPose("/palm", p1)
+        # else we can finish the approach
+        self.planner.start_move_to_pose((0, 0, kal.point[2] - AppleApproach.STOP_DIST_Z), MOVE_TOLERANCE)
+        return (AppleApproach.State.APPROACH_IN_MOTION, f'final approach: {kal.point[2]}')
 
-        # stepSize = 1
+    def approach_in_motion_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
+        # if the filter reads under the threshold, we're done! Better to stop early
+        if kal and kal.point[2] <= AppleApproach.STOP_DIST_Z:
+            self.planner.stop()
+            return (AppleApproach.State.DONE, f'apple approach complete at distance {kal.point[2]}')
 
-        # eefP_palm.pose.position.x += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
-        # eefP_palm.pose.position.y += (CURCAM_VEC[0] * stepSize, CURCAM_VEC[1] * stepSize)
+        # if we don't have the kalman filter wait another tick
+        if self.planner.is_in_motion() or not kal:
+            return None
 
-        # Convert [Palm] back to [world]
+        # if an error occurred, panic so we can reset
+        if self.planner.move_group_action.get_state() != GoalStatus.SUCCEEDED:
+            self.die(f'Failed to move in approach with error status {self.planner.move_group_action.get_goal_status_text()}')
 
-        # t = self.tf_listener_.getLatestCommonTime("/palm", "/world")
-        # p2 = geometry_msgs.msg.PoseStamped()
-        # p2.header.frame_id = "/world"
-        # p2.pose = eefP_palm.pose
+        # if the distance sensor is not confident, center some more
+        if kal.point[2] > AppleApproach.CAMERA_DEAD_THRESH_Z:
+            return (AppleApproach.State.CENTER, f'Centering some more at distance {kal.point[2]}')
+        # else continue approaching
+        return (AppleApproach.State.APPROACH, f'Continuing approach at distance {kal.point[2]}')
 
-        # End Effector Position [world] (updated)
-
-        # eefP_world = self.tf_listener_.transformPose("/world", p2)
-
-        # rospy.logwarn_once([eefP, eefP_palm, eefP_world])
-
-        pass
 
 def main():
-    
-    try:
-        rospy.init_node('applevision_motion')
-        rospy.wait_for_service('Tf2Transform')
+    rospy.init_node('applevision_motion')
+    rospy.wait_for_service('Tf2TransformPoseStamped')
 
-        aCsub = Subscriber('applevision/apple_camera', RegionOfInterestWithCovarianceStamped)
-        aDsub = Subscriber('applevision/apple_dist', Range)
-        aP = ApproachPlanner(aCsub, aDsub)
+    planner = MotionPlanner()
+    approach = AppleApproach(planner)
 
-        rospy.spin()
+    camera = Subscriber('applevision/apple_camera', RegionOfInterestWithConfidenceStamped, queue_size=10)
+    dist = Subscriber('applevision/apple_dist', Range, queue_size=10)
+    kal = Subscriber('applevision/est_apple_pos', PointWithCovarianceStamped, queue_size=10)
+    min_tick = SynchronizerMinTick(
+        [kal, camera, dist], queue_size=20, slop=SYNC_SLOP, min_tick=SYNC_TICK)
+    min_tick.registerCallback(approach.tick_callback)
 
-    except rospy.ROSInterruptException:
-        pass
-
-
+    rospy.spin()
 
 
 if __name__ == '__main__':

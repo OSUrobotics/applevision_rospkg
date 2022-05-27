@@ -5,38 +5,31 @@ from __future__ import print_function
 import os
 import subprocess
 import sys
-import select
-from threading import Lock, Thread
+from threading import Lock
+import math
 
 import tf2_ros
 import moveit_commander
 import rospy
 from message_filters import Cache, Subscriber
 from moveit_msgs.msg import MoveGroupActionFeedback
-from sensor_msgs.msg import Range
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import TransformStamped
-from applevision_rospkg.srv import Tf2Transform
 
 
-class ProxyStdout(Thread):
-    def __init__(self, stdout, prefix, **kwargs):
-        super(ProxyStdout, self).__init__(**kwargs)
-        self.daemon = True
-        self.prefix = prefix
-        self.stdout = stdout
-
-    def run(self):
-        while not self.stdout.closed:
-            line = self.stdout.readline()
-            if not line:
-                break
-            rospy.loginfo(self.prefix + line.strip())
+def quaternion_multiply(quaternion1, quaternion0):
+    x0, y0, z0, w0 = quaternion0
+    x1, y1, z1, w1 = quaternion1
+    return ([-x1 * x0 - y1 * y0 - z1 * z0 + w1 * w0,
+                     x1 * w0 + y1 * z0 - z1 * y0 + w1 * x0,
+                     -x1 * z0 + y1 * w0 + z1 * x0 + w1 * y0,
+                     x1 * y0 - y1 * x0 + z1 * w0 + w1 * z0])
 
 class ExpoDemo():
     BOUNDS_X = (-0.8, -0.2)
     BOUNDS_Y = (-1.2, 0)
     BOUNDS_Z = (1, 2)
+    BOUND_ORIENTATION = 20
+    ORIENTATION_TARGET = (-0.707, 0, 0, 0.707)
     EXPO_DEMO_PROGRAM = os.path.join(os.path.dirname(__file__), 'applevision_motion.py')
     CHECK_DURATION = rospy.Duration.from_sec(0.1)
     GROUP_NAME = 'manipulator'
@@ -85,9 +78,7 @@ class ExpoDemo():
         rospy.on_shutdown(self.kill_robot)
 
     def make_control_system_process(self):
-        proc = subprocess.Popen(
-            [self.EXPO_DEMO_PROGRAM], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
-        ProxyStdout(proc.stdout, 'EXPO: DEMO {}:'.format(self.demo_seq)).start()
+        proc = subprocess.Popen([self.EXPO_DEMO_PROGRAM, 'EXPO: DEMO {}:'.format(self.demo_seq)])
         self.demo_seq += 1
         return proc
 
@@ -137,6 +128,17 @@ class ExpoDemo():
     def demo_is_running(self):
         return self.demo_process is not None and self.demo_process.poll() is None
 
+    def is_position_out(self, coords):
+        return coords.x < ExpoDemo.BOUNDS_X[0] or coords.x > ExpoDemo.BOUNDS_X[1] \
+                or coords.y < ExpoDemo.BOUNDS_Y[0] or coords.y > ExpoDemo.BOUNDS_Y[1] \
+                or coords.z < ExpoDemo.BOUNDS_Z[0] or coords.z > ExpoDemo.BOUNDS_Z[1]
+    
+    def is_orientation_out(self, quat):
+        # find the smallest angle between this quaternion and the target, and check it's within range
+        new = quaternion_multiply((-quat.x, -quat.y, -quat.z, quat.w), self.ORIENTATION_TARGET)
+        angle = abs(180.0 - math.degrees(2*math.atan2(math.sqrt(new[0]**2 + new[1]**2 + new[2]**2), new[3])))
+        return angle > self.BOUND_ORIENTATION
+
     def check_cb(self, *args):
         if self.running_lock.locked():
             return
@@ -148,10 +150,10 @@ class ExpoDemo():
             except Exception as e:
                 self.die_gracefully('EXPO: tf failed with error {}. Probably time to restart the system.'.format(e))
             coords = where_in_world.transform.translation
-            is_out_bounds = coords.x < ExpoDemo.BOUNDS_X[0] or coords.x > ExpoDemo.BOUNDS_X[1] \
-                or coords.y < ExpoDemo.BOUNDS_Y[0] or coords.y > ExpoDemo.BOUNDS_Y[1] \
-                or coords.z < ExpoDemo.BOUNDS_Z[0] or coords.z > ExpoDemo.BOUNDS_Z[1]
-            
+            is_out_bounds = self.is_position_out(coords)
+            orientation = where_in_world.transform.rotation
+            is_out_orientation = self.is_orientation_out(orientation)
+
             # count idle ticks
             if self.demo_is_running() and not self.is_moving():
                 self.idle_count += 1
@@ -175,6 +177,10 @@ class ExpoDemo():
                     coord_str = str(coords).replace('\n', ' ')
                     rospy.logwarn('EXPO: bounds check failed with coordinates {}, terminating and reseting...'.format(coord_str))
                     self.kill_robot()
+                elif is_out_orientation:
+                    # the robot is doing disco moves
+                    rospy.logwarn('EXPO: bounds check failed for orientation, terminating and reseting...')
+                    self.kill_robot()
                 elif self.idle_count > self.TICK_TIMEOUT:
                     # the robot has been idle (not controlled by this program) for too long
                     rospy.logwarn('EXPO: demo got stuck, restarting...')
@@ -192,7 +198,6 @@ class ExpoDemo():
                         self.die_gracefully('EXPO: demo crashed on launch, system cannot recover.')
                 else:
                     # the demo is crashed and the robot is stuck in another position
-                    rospy.sleep(1)
                     rospy.loginfo('EXPO: Sending robot home...')
                     self.go_home() 
 

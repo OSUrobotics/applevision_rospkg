@@ -3,6 +3,6 @@
     <node name="applevision_vision" pkg="applevision_rospkg" type="applevision_vision.py" respawn="true" />
     <node name="applevision_visualizer" pkg="applevision_rospkg" type="applevision_visualizer.py" respawn="true" />
     <node name="applevision_fake_sensor_data" pkg="applevision_rospkg" type="applevision_fake_sensor_inputs.py" respawn="true" />
-    <!-- <node name="applevision_filter" pkg="applevision_rospkg" type="applevision_filter.py" respawn="true" /> -->
+    <node name="applevision_filter" pkg="applevision_rospkg" type="applevision_filter.py" respawn="true" />
     <node name="palm_camera" pkg="applevision_rospkg" type="camerainfo_pub.py" respawn="true" args="$(find applevision_rospkg)/config/camerainfo.yaml"/>
 </launch>

@@ -5,10 +5,11 @@
 
 from __future__ import print_function
 
-from applevision_rospkg.srv import Tf2Transform
+from applevision_rospkg.srv import Tf2Transform, Tf2TransformPoseStamped
 from threading import Lock
 import rospy
 import tf2_ros
+import tf2_geometry_msgs
 
 
 def main():
@@ -24,8 +25,16 @@ def main():
             except Exception as e:
                 raise rospy.ServiceException(e)
 
+    def transform_pose(req):
+        with tf_buffer_lock:
+            try:
+                return tf_buffer.transform(req.pose, req.target_frame, req.timeout)
+            except Exception as e:
+                raise rospy.ServiceException(e)
+
     rospy.loginfo('Starting Tf2 server...')
-    s = rospy.Service('Tf2Transform', Tf2Transform, get_transform)
+    s1 = rospy.Service('Tf2Transform', Tf2Transform, get_transform)
+    s2 = rospy.Service('Tf2TransformPoseStamped', Tf2TransformPoseStamped, transform_pose)
     rospy.spin()
 
 

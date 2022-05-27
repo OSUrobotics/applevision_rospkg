@@ -3,7 +3,7 @@ import rospy
 from threading import Lock, Condition
 from std_msgs.msg import Header
 from sensor_msgs.msg import CameraInfo
-from message_filters import Cache, Subscriber
+from message_filters import Cache, Subscriber, ApproximateTimeSynchronizer
 
 
 class ServiceProxyFailed(Exception):
@@ -76,3 +76,65 @@ class HeaderCalc:
             self._seq += 1
 
         return fake_header
+
+
+class SynchronizerMinTick(ApproximateTimeSynchronizer):
+    """
+    Calls a callback if one of two conditions occur:
+      1. A group of messages have timestamps within self.slop
+      2. An above group has not occured within self.min_tick
+    In other words, this class seeks to synchronize incoming messages with the constraint that
+    we would also like the callback to be invoked at a minimum frequency. This behavior allows
+    for graceful failure when a sensor stops publishing unexpectedly.
+    If the min_tick timer elapses and not all messages are ready, the callback will be invoked
+    with the earliest message from the highest priority subscriber (in order passed to the constructor),
+    all topics that do not have a message recent enough will be filled with None.
+    """
+
+    def __init__(self, fs, queue_size: int, slop: float, min_tick: float):
+        super(SynchronizerMinTick, self).__init__(fs, queue_size, slop)
+        self.min_tick = rospy.Duration.from_sec(min_tick)
+        self.last_tick = rospy.Time()
+        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
+
+    def signalMessage(self, *msg):
+        if self.tick_timer:
+            self.tick_timer.shutdown()
+
+        self.last_tick = rospy.Time()
+        self.tick_timer = rospy.Timer(self.min_tick, self._timerCallback, reset=True, oneshot=True)
+        return super(SynchronizerMinTick, self).signalMessage(*msg)
+
+    def _timerCallback(self, _):
+        # signalMessage with whatever the latest data is
+        with self.lock:
+            found_msg = None
+            for q in self.queues:
+                if not q:
+                    continue
+                highest_stamp = max(q)
+                if rospy.Time.now() - highest_stamp <= self.min_tick:
+                    found_msg = q[highest_stamp]
+
+            if not found_msg:
+                # nothing has pinged within the tick rate
+                rospy.logwarn('SynchronizerMinTick: no packets within min tick rate')
+                ret = [None for _ in range(len(self.queues))]
+            else:
+                target_stamp = found_msg.header.stamp
+                # collect all things that have pinged within the slop
+                ret = []
+                for q in self.queues:
+                    if not q:
+                        ret.append(None)
+                        continue
+                    best_stamp_diff, best_stamp = min((abs(target_stamp - s), s) for s in q)
+                    if best_stamp_diff <= self.slop:
+                        ret.append(q[best_stamp])
+                    else:
+                        ret.append(None)
+
+            # empty queue and return
+            self.signalMessage(*ret)
+            for q in self.queues:
+                q.clear()

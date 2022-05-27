@@ -3,7 +3,6 @@ float64 x
 float64 y
 float64 w
 float64 h
-float64 x_var
-float64 y_var
-float64 w_var
-float64 h_var
+int16 image_w
+int16 image_h
+float64 confidence

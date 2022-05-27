@@ -6,7 +6,7 @@ import time
 import numpy as np
 from sensor_msgs.msg import Image
 from cv_bridge.core import CvBridge
-from applevision_rospkg.msg import RegionOfInterestWithCovarianceStamped
+from applevision_rospkg.msg import RegionOfInterestWithConfidenceStamped
 from helpers import HeaderCalc
 from applevision_vision import MODEL_PATH
 
@@ -68,7 +68,7 @@ class AppleVisionHandler:
                  debug_frame_topic: str) -> None:
         self.net = net
         self.pub = rospy.Publisher(topic,
-                                   RegionOfInterestWithCovarianceStamped,
+                                   RegionOfInterestWithConfidenceStamped,
                                    queue_size=10)
         self.pub_debug = rospy.Publisher(debug_frame_topic,
                                          Image,
@@ -110,16 +110,15 @@ class AppleVisionHandler:
                 *sorted(zip(confidences, boxes), reverse=True))
 
             # TODO: base varience off of confidence
-            msg = RegionOfInterestWithCovarianceStamped(
+            msg = RegionOfInterestWithConfidenceStamped(
                 header=self._header.get_header(),
                 x=boxes[0][0],
                 y=boxes[0][1],
                 w=boxes[0][2],
                 h=boxes[0][3],
-                x_var=30**2,
-                y_var=30**2,
-                w_var=30**2,
-                h_var=30**2)
+                image_w=640,
+                image_h=360,
+                confidence=confidences[0])
             self.pub.publish(msg)
 
             # attempted to put in json format string
@@ -133,19 +132,18 @@ class AppleVisionHandler:
             cv2.rectangle(frame, box, color, 2)
             cv2.rectangle(frame, (box[0], box[1] - 20),
                           (box[0] + box[2], box[1]), color, -1)
-            cv2.putText(frame, "Apple", (box[0] + 5, box[1] - 5),
+            cv2.putText(frame, f"Apple: {conf:.2}", (box[0] + 5, box[1] - 5),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
         else:
-            msg = RegionOfInterestWithCovarianceStamped(
+            msg = RegionOfInterestWithConfidenceStamped(
                 header=self._header.get_header(),
                 x=0,
                 y=0,
                 w=0,
                 h=0,
-                x_var=np.inf,
-                y_var=np.inf,
-                w_var=np.inf,
-                h_var=np.inf)
+                image_w=640,
+                image_h=360,
+                confidence=0)
             self.pub.publish(msg)
 
         debug_im = self._br.cv2_to_imgmsg(frame)
