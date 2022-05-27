@@ -102,31 +102,29 @@ class MotionPlanner():
 
 
 class AppleApproach():
-    CENTER_THRESH_XY = 0.05
+    CENTER_THRESH_XY = 0.02
     CAMERA_DEAD_THRESH_Z = 0.3
     DIST_VAR_GOOD_THRESH = 0.02**2
     STEP_DIST_Z = 0.05
-    STOP_DIST_Z = 0.1
+    STOP_DIST_Z = 0.14
+    ESTOP_DIST_Z = 0.06
+    PALM_DIST_OFF_Y = 0.01 # TODO: fix from URDF
 
     class State(Enum):
-        IDLE_HOME = auto()
-        CENTER = auto()
+        IDLE = auto()
         CENTER_IN_MOTION = auto()
-        APPROACH = auto()
         APPROACH_IN_MOTION = auto()
         DONE = auto()
 
     def __init__(self, planner: MotionPlanner):
         self.planner = planner
-        self.state = self.State.IDLE_HOME
+        self.state = self.State.IDLE
         self.next_state: Optional[AppleApproach.State] = None
         self.running_lock = Lock()
 
         self._state_cb_table = {
-            AppleApproach.State.IDLE_HOME: self.idle_home_callback,
-            AppleApproach.State.CENTER: self.center_callback,
+            AppleApproach.State.IDLE: self.idle_callback,
             AppleApproach.State.CENTER_IN_MOTION: self.center_in_motion_callback,
-            AppleApproach.State.APPROACH: self.approach_callback,
             AppleApproach.State.APPROACH_IN_MOTION: self.approach_in_motion_callback
         }
 
@@ -140,6 +138,10 @@ class AppleApproach():
             return
         try:
             with self.running_lock:
+                if kal:
+                    # TODO: this is hacky
+                    kal.point = (kal.point[0], kal.point[1] + self.PALM_DIST_OFF_Y, kal.point[2])
+
                 if self.state == AppleApproach.State.DONE:
                     rospy.loginfo(f'{LOG_PREFIX} Approach complete! Terminating...')
                     rospy.sleep(5)
@@ -153,58 +155,49 @@ class AppleApproach():
             self.die(f'Caught exception {e}:\n{traceback.format_exc()}')
 
 
-    def idle_home_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
-        # if bounding box present, switch to centering
-        # TODO: check variance?
-        if cam and cam.w and cam.h and kal:
-            return (AppleApproach.State.CENTER, 'detected apple, centering')
-        # else do nothing
-        return None
-
-    def center_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
-        if not kal:
-            return (AppleApproach.State.IDLE_HOME, 'centered without kalman filter')
-
-        # start centering
-        self.planner.start_move_to_pose((kal.point[0], kal.point[1], 0), MOVE_TOLERANCE)
-        return (AppleApproach.State.CENTER_IN_MOTION, f'started centering: {kal.point[0], kal.point[1]}')
-
-    def center_in_motion_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
-        if self.planner.is_in_motion() or not kal:
+    def idle_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
+        if not kal or not cam:
             return None
+        
+        # If the camera is still useful according to the kalman filter and we need centering
+        if kal.point[2] >= AppleApproach.CAMERA_DEAD_THRESH_Z \
+            and (abs(kal.point[0]) > AppleApproach.CENTER_THRESH_XY or abs(kal.point[1]) > AppleApproach.CENTER_THRESH_XY):
+            # we need a bounding box to continue, otherwise the filter has only a guess
+            if not cam.w:
+                return None
+            # center the robot
+            self.planner.start_move_to_pose((kal.point[0], kal.point[1], 0), MOVE_TOLERANCE)
+            return (AppleApproach.State.CENTER_IN_MOTION, f'centering: {kal.point[0], kal.point[1]}')
 
-        # Check if we're centered or close, if so begin approach
-        if (abs(kal.point[0]) < AppleApproach.CENTER_THRESH_XY and abs(kal.point[1]) < AppleApproach.CENTER_THRESH_XY) \
-                or kal.point[2] < AppleApproach.CAMERA_DEAD_THRESH_Z:
-            return (AppleApproach.State.APPROACH, f'apple is centered: {kal.point[0], kal.point[1]}')
-
-        # else center again
-        return (AppleApproach.State.CENTER, f'centering again: {kal.point[0], kal.point[1]}')
-
-    def approach_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
-        # if we don't have the kalman filter wait another tick
-        if not kal:
-            return None
-
-        # if the filter reads under the threshold, we're done!
+        # if we're close enough, stop
         if kal.point[2] <= AppleApproach.STOP_DIST_Z:
             return (AppleApproach.State.DONE, f'apple approach complete at distance {kal.point[2]}')
 
-        # if the distance sensor is not confident, approach a little bit
+        # otherwise approach the apple slowly
         if kal.covariance[8] > AppleApproach.DIST_VAR_GOOD_THRESH:
             self.planner.start_move_to_pose((0, 0, min(kal.point[2] - AppleApproach.STOP_DIST_Z, AppleApproach.STEP_DIST_Z)), MOVE_TOLERANCE)
-            return (AppleApproach.State.APPROACH_IN_MOTION, f'small approach: {kal.point[2]}')
+            return (AppleApproach.State.APPROACH_IN_MOTION, f'apple is centered: {kal.point[0], kal.point[1]}, approaching slowly: {kal.covariance[8]}')
+        else:
+            self.planner.start_move_to_pose((0, 0, kal.point[2] - AppleApproach.STOP_DIST_Z), MOVE_TOLERANCE)
+            return (AppleApproach.State.APPROACH_IN_MOTION, f'apple is centered: {kal.point[0], kal.point[1]}, approaching quickly: {kal.covariance[8]}')
+
+    def center_in_motion_callback(self, *_):
+        if self.planner.is_in_motion():
+            return None
 
         # if an error occurred, panic so we can reset
         status = self.planner.move_group_action.get_state()
         if status != GoalStatus.SUCCEEDED:
-            self.die(f'Failed to move in approach with status {status} error status {self.planner.move_group_action.get_goal_status_text()}')
+            self.die(f'Failed to move in center with status {status} error status {self.planner.move_group_action.get_goal_status_text()}')
 
-        # else we can finish the approach
-        self.planner.start_move_to_pose((0, 0, kal.point[2] - AppleApproach.STOP_DIST_Z), MOVE_TOLERANCE)
-        return (AppleApproach.State.APPROACH_IN_MOTION, f'final approach: {kal.point[2]}')
+        # else we are forced to continue approaching since the camera is too noisy to learn anything
+        return (AppleApproach.State.IDLE, f'done centering')
 
-    def approach_in_motion_callback(self, kal: Optional[PointWithCovarianceStamped], *_):
+    def approach_in_motion_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
+        # sanity check: if the distance sensor reads under a certain value emergency stop
+        if dist and dist.range < AppleApproach.ESTOP_DIST_Z:
+            self.die(f'Detected obstruction at {dist.range}')
+
         # if the filter reads under the threshold, we're done! Better to stop early
         if kal and kal.point[2] <= AppleApproach.STOP_DIST_Z:
             self.planner.stop()
@@ -215,14 +208,11 @@ class AppleApproach():
             return None
 
         # if an error occurred, panic so we can reset
-        if self.planner.move_group_action.get_state() != GoalStatus.SUCCEEDED:
-            self.die(f'Failed to move in approach with error status {self.planner.move_group_action.get_goal_status_text()}')
+        status = self.planner.move_group_action.get_state()
+        if status != GoalStatus.SUCCEEDED:
+            self.die(f'Failed to move in approach with status {status} error status {self.planner.move_group_action.get_goal_status_text()}')
 
-        # if the distance sensor is not confident, center some more
-        if kal.point[2] > AppleApproach.CAMERA_DEAD_THRESH_Z:
-            return (AppleApproach.State.CENTER, f'Centering some more at distance {kal.point[2]}')
-        # else continue approaching
-        return (AppleApproach.State.APPROACH, f'Continuing approach at distance {kal.point[2]}')
+        return (AppleApproach.State.IDLE, f'done approaching')
 
 
 def main():
