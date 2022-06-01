@@ -9,12 +9,19 @@ Applevision is a 2022 ECE Capstone team consisting of @cogswatch, @PeterJBloch, 
 
 You can install this package and it's dependencies as follows:
 
-1. Install ROS melodic with Python 3 support on your machine: https://www.dhanoopbhaskar.com/blog/2020-05-07-working-with-python-3-in-ros-kinetic-or-melodic/. TODO: test.
-
+1. Install ROS Melodic (Ubuntu 18.04) on to your computer:
+    1. Follow the [ROS installation instructions](http://wiki.ros.org/melodic/Installation/Ubuntu). Use `ros-melodic-desktop-full`.
+    2. Install Python 3 with ROS support (translated from [this tutorial](https://medium.com/@beta_b0t/how-to-setup-ros-with-python-3-44a69ca36674)):
+        ```sh
+        sudo apt install python3-pip python3-dev python-catkin-tools
+        pip3 install --upgrade pip
+        pip3 install rospkg catkin_pkg
+        ```
 2. Create a workspace linking against python3 and start using it: 
    ```sh
     mkdir ~/catkin_ws
     cd ~/catkin_ws
+    mkdir src
     catkin init
     catkin config -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.6m -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.6m.so
     catkin build # if this fails, make sure you setup the environment correctly
@@ -51,8 +58,8 @@ You can install this package and it's dependencies as follows:
 
 5. Install some missing python dependencies manually:
     ```sh
-    pip3 install --upgrade pip
-    pip3 install empy numpy opencv-python-headless
+    pip3 install empy opencv-python-headless
+    pip3 install --upgrade numpy
     ```
 
 6. Finally, build the workspace and source the new setup file. You are now ready to start development.
@@ -88,7 +95,7 @@ src/applevision_rospkg/bin/applevision_motion.py
 
 ### Real Robot
 
-The UR5e must be powered on and running the `avl_pc` program for the below launch sequence to work. TODO connecting sensors and flashing OpenCM 9.04 board.
+The UR5e must be powered on and running the `avl_pc` program for the below launch sequence to work. Additionally, the Apple Vision camera should be connected and the [distance sensor bridge](https://github.com/OSUrobotics/applevision_distance_bridge) should be setup and connection.
 
 ```sh
 # Each of these commands are in seperate terminals
@@ -107,19 +114,52 @@ src/applevision_rospkg/bin/applevision_motion.py
 
 ## Development
 
-### Workspace Structure
+### Repository Structure
 
-TODO
+In general this repository follows the [ROS package guidelines](http://wiki.ros.org/Packages). A quick overview of the file structure is shown below:
+
+```
+catkin_ws/
+├─ bin/
+|  ├─ applevision_fake_sensor_inputs.py     Fake distance sensor for simulated environment
+|  ├─ applevision_filter.py                 Kalman filter
+|  ├─ applevision_motion.py                 Control system
+|  ├─ applevision_vision.py                 Computer vision
+|  ├─ applevision_visualizer.py             Debug RViz marker generation
+|  ├─ camerainfo_pub.py                     Camera info publisher utility
+|  ├─ tf2_proxy_run.py                      TF2 Proxy for Python 3 utility
+├─ config/
+|  ├─ camerainfo.yaml                       OpenCV camera calibration for the Apple Vision camera
+├─ launch/
+|  ├─ config.launch                         Base launch file for apple vision
+|  ├─ fake_sensor.launch                    Launch file for simulated environment
+|  ├─ real_sensor_robot.launch              Launch file for the real UR5e
+├─ src/
+│  ├─ applevision_kalman/                   Kalman filter and distance sensor model
+|  ├─ applevision_vision/                   Model weights for computer vision
+|  ├─ helpers/                              Misc. helpers used in multiple scripts
+├─ ...
+```
+
+### TF Frames
+
+![Three of the TF frames used by Apple Vision](readme/tf.png)
+
+Apple Vision relies on the following [TF frames](http://wiki.ros.org/tf2) to be defined:
+* `palm` - The current position of the end effector, as shown in the image above. The XY axis must be aligned to the camera coordinate system (top left), and the Z axis must be pointed towards the apple. Defined in [`applevision_moveit_config`](https://github.com/OSUrobotics/applevision_moveit_config/blob/db5c61051ab9451ddaa7eff7fa74c83ff5d4e650/urdf/ur5e.xacro#L67-L73).
+* `palm_dist` - A fixed offset from the `palm` frame modelling the exact position of the distance sensor, and rotated such that the X axis points towards the apple (for compatibility with the `Range` message). Defined in [`config.launch`](./launch/config.launch).
+* `palm_camera` - A fixed offset from the `palm` frame modelling the exact position of the camera. Defined in [`config.launch`](./launch/config.launch).
+* `applevision_target` - A point defining where the fake apple is located in the simulated environment. Defined in [`config.launch`](./launch/config.launch).
+* `applevision_start_pos` - An arbitrary point used as the "zero" for the Kalman Filter. Must be fixed to the world. Defined in [`config.launch`](./launch/config.launch).
 
 ### General Architecture
 
-The general architecture for Applevision is shown in the diagram below.
+In addition to being able to control the UR5e, Apple Vision features a full-simulated environment for local development. The below diagrams show the data flow for these two environments: See [ROS Concepts](http://wiki.ros.org/ROS/Concepts) for more information on how ROS projects are architected.
 
-NOTE: omitting Tf2Proxy.
+#### Simulated Robot
 
-NOTE: kalman filter is dead code currently
+The simulated environment uses [RViz Camera Stream](https://github.com/OSUrobotics/rviz_camera_stream) and our homemade [ToF model](src/applevision_kalman/model.py) to generate simulated sensor data. 
 
-Development:
 ```mermaid
 graph LR
     subgraph Key
@@ -165,9 +205,11 @@ graph LR
     dist --> filter
     bounding --> filter
     filter --> kalout
+    kalout --> control
 ```
 
-Production:
+#### Real Robot
+
 ```mermaid
 graph LR
     subgraph Key
@@ -209,12 +251,57 @@ graph LR
     dist --> filter
     bounding --> filter
     filter --> kalout
+    kalout --> control
 ```
 
+#### Using TF in Python 3
 
-TODO: block comments at the top of every file
+As ROS melodic does not formally support Python 3, attempting to use TF in a Python 3 environment will result in an error similar to the following:
+```python
+import tf2_ros
+```
+```console
+Traceback (most recent call last):
+...
+ImportError: dynamic module does not define module export function (PyInit__tf2)
+```
 
-### Project Structure
+To get around this limitation, Apple Vision provides a [utility](bin/tf2_proxy_run.py) that exposes `tf_buffer.lookup_transform` and `tf_buffer.transform` as a service. All Python 3 files in Apple Vision use this service:
+```python
+tf_transform = rospy.ServiceProxy('Tf2Transform', Tf2Transform)
+result = tf_transform(...)
+```
+
+For places where these services need to be invoked frequently (>10Hz), Apple Vision uses a [`RobustServiceProxy`](src/helpers/__init__.py) helper with automatic retry and linear backoff to minimize network-related errors.
+
+### Control System Overview
+
+A rough state diagram of the control system is shown below:
+
+```mermaid
+stateDiagram
+    idle: Idle
+    center: Center
+    approach: Approach
+
+    [*] --> idle
+    idle --> idle: Apple not visible
+    idle --> center: Apple visible && Apple off center
+    center --> idle
+    idle --> approach
+    approach --> idle
+    approach --> [*]: Apple close enough
+
+```
+
+Where (axis are relative to the `palm` frame):
+* `Idle` - Robot isn't moving.
+* `Center` - Robot is correcting XY position relative to the apple.
+* `Approach` - Robot is moving towards the apple (ideally only in the Z axis).
+
+The [complete implementation](bin/applevision_motion.py) also contains several transitions not shown that either handle errors (ex. MoveIt is unable to plan a path) or stop the robot early if an obstruction is detected.
+
+### Project Hosting
 
 Physically, the Apple Vision project is split into five GitHub repositories under the [OSURobotics organization](https://github.com/OSUrobotics). Four which are required for operation of the system:
  * [`applevision_rospkg`](https://github.com/OSUrobotics/applevision_rospkg) - This repository, all code and project documentation.

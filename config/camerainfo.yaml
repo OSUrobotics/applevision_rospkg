@@ -1,3 +1,5 @@
+# Camera calibration info generated from OpenCV for the Apple Vision Camera
+# See https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html for more info
 image_height: 360
 image_width: 640
 camera_name: palm_camera

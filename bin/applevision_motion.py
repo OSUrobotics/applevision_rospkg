@@ -154,11 +154,10 @@ class AppleApproach():
         except Exception as e:
             self.die(f'Caught exception {e}:\n{traceback.format_exc()}')
 
-
     def idle_callback(self, kal: Optional[PointWithCovarianceStamped], cam: Optional[RegionOfInterestWithConfidenceStamped], dist: Optional[Range]):
         if not kal or not cam:
             return None
-        
+
         # If the camera is still useful according to the kalman filter and we need centering
         if kal.point[2] >= AppleApproach.CAMERA_DEAD_THRESH_Z \
             and (abs(kal.point[0]) > AppleApproach.CENTER_THRESH_XY or abs(kal.point[1]) > AppleApproach.CENTER_THRESH_XY):
