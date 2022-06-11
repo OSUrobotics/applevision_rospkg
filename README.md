@@ -134,6 +134,8 @@ catkin_ws/
 |  ├─ config.launch                         Base launch file for apple vision
 |  ├─ fake_sensor.launch                    Launch file for simulated environment
 |  ├─ real_sensor_robot.launch              Launch file for the real UR5e
+├─ models/
+|  ├─ applevision_end_effector.SLDPRT       CAD model for the adapter used to mount the sensors to the UR5e.
 ├─ src/
 │  ├─ applevision_kalman/                   Kalman filter and distance sensor model
 |  ├─ applevision_vision/                   Model weights for computer vision
