@@ -12,7 +12,7 @@ class ServiceProxyFailed(Exception):
 
 class RobustServiceProxy(rospy.ServiceProxy):
     def __init__(self, name, service_class, persistent=False, headers=None, retry_count=2, backoff=0.01, block_max=0.05):
-        super(RobustServiceProxy, self).__init__(name, service_class, persistent, headers)
+        super().__init__(name, service_class, persistent, headers)
         self.retry_count = retry_count
         self.backoff = backoff
         self.block_max = block_max
@@ -29,7 +29,7 @@ class RobustServiceProxy(rospy.ServiceProxy):
                     # restart connection, presumably transport failed
                     self.transport = None
                 if i == self.retry_count - 1 or cur_dur >= self.block_max:
-                    raise ServiceProxyFailed(e) #from e
+                    raise ServiceProxyFailed(e) from e
                 time.sleep(min(self.backoff*(i + 1), self.block_max - cur_dur))
 
     def __call__(self, *args, **kwds):
@@ -37,7 +37,7 @@ class RobustServiceProxy(rospy.ServiceProxy):
 
 
 class CameraInfoHelper:
-    def __init__(self, camera_info_topic): #: str) -> None:
+    def __init__(self, camera_info_topic: str) -> None:
         self.camera_info_topic = camera_info_topic
         self._cache_lock = Lock()
         self._cache_add_condition = Condition(self._cache_lock)
@@ -50,7 +50,7 @@ class CameraInfoHelper:
             while not len(self._camera_info_cache.cache_msgs):
                 self._cache_add_condition.wait()
 
-    def get_last_camera_info(self): # -> CameraInfo:
+    def get_last_camera_info(self) -> CameraInfo:
         with self._cache_lock:
             ret = self._camera_info_cache.getLast()
         if ret is None:
@@ -63,7 +63,7 @@ class CameraInfoHelper:
 
 
 class HeaderCalc:
-    def __init__(self, frame_id): #: str):
+    def __init__(self, frame_id: str):
         self.frame_id = frame_id
         self._seq = 0
 
@@ -91,7 +91,7 @@ class SynchronizerMinTick(ApproximateTimeSynchronizer):
     all topics that do not have a message recent enough will be filled with None.
     """
 
-    def __init__(self, fs, queue_size, slop, min_tick): #int, slop: float, min_tick: float):
+    def __init__(self, fs, queue_size: int, slop: float, min_tick: float):
         super(SynchronizerMinTick, self).__init__(fs, queue_size, slop)
         self.min_tick = rospy.Duration.from_sec(min_tick)
         self.last_tick = rospy.Time()

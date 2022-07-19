@@ -1,4 +1,0 @@
-<launch>
-    <node name="applevision_motion" pkg="applevision_rospkg" type="applevision_motion.py" respawn="true" />
-    <node name="with_nodes" pkg="applevision_rospkg" type="with_nodes.py" respawn="true" />
-</launch>
