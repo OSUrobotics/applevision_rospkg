@@ -65,6 +65,8 @@ add_service_files(
    FILES
    Tf2Transform.srv
    Tf2TransformPoseStamped.srv
+   AppleVis.srv
+   MoveGroup.srv
 )
 
 ## Generate actions in the 'action' folder
